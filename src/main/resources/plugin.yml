@@ -1,0 +1,13 @@
+name: Transactions
+version: '${project.version}'
+main: com.tyurvib.transactions.Transactions
+api-version: 1.21
+folia-supported: true
+commands:
+  transactions:
+    description: Открыть историю транзакций
+    usage: /transactions
+    aliases: [tr]
+depend:
+  - Vault
+  - VaultEvents

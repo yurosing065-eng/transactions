@@ -1,0 +1,34 @@
+# The symbol that will appear next to transaction amounts
+prefix: "Ⓞ"
+#Warning! when downloading a new version of the plugin, please use /tr update.
+# Whether to show the "2-week statistics" button in the GUI
+show-stats-button: true
+save-interval-seconds: 60
+# The language of the plugin. Available languages:
+language: en
+  #ru — Russian
+  #en — English
+  #es — Spanish
+  #de — German
+  #fr — French
+  #zh — Chinese
+  #pt — Portuguese
+  #it — Italian
+  #ja — Japanese
+  #ko — Korean
+  #tr — Turkish
+  #pl — Polish
+  #sv — Swedish
+#color for transactions INCOME
+income-message-color: "§f" #message color
+income-amount-color: "§a"  # color in (),example (500)
+#color for transactions EXPENSE
+expense-message-color: "§f"
+expense-amount-color: "§c"
+#color for transactions YELLOW
+yellow-message-color: "§f"
+yellow-amount-color: "§e"
+clean-transactions-period: "14d"
+log-external-transactions: true
+allow-balance-toggle: true
+default-gmt-offset: 0

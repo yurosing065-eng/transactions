@@ -1,0 +1,84 @@
+back-button: §f«§7 返回
+balance-change: '%p1% → %p2%'
+balance-disabled: 已停用餘額變更顯示
+balance-enabled: 已啟用餘額變更顯示
+balance-toggle-disabled: 切換餘額顯示指令已停用
+balance-usage: '用法: /transactions balance [on/off]'
+cancel-rollback: 取消
+cannot-search-self: 你不能查詢自己的交易！
+cannot-view-self: 你不能使用此指令檢視自己的交易！
+cleanup-executed: §a已清除舊交易記錄！
+config-reloaded: §a設定檔成功重新載入。
+confirm-rollback: 確認還原
+daily-stats-title: 每日統計 %p1%
+download-button: 下載 TXT 檔
+download-failed: 儲存交易記錄檔案時發生錯誤
+download-success: 交易記錄已儲存於 %p1%
+enter-player-name: 請在聊天中輸入玩家名稱
+error-no-target: '錯誤：未指定玩家'
+filter-button: §b篩選器
+filter-by-player: 按玩家篩選
+filter-current-time: '§7期間：§f'
+filter-current-type: '§7類型：§f'
+filter-gui-title: §8篩選器
+filter-time-all_time: §f全部時間
+filter-time-last_30_days: §f最近 30 天
+filter-time-last_7_days: §f最近 7 天
+filter-type-all: §f全部
+filter-type-expense: §c支出
+filter-type-income: §a收入
+filter-type-other: 其他
+filter-type-pay: 轉帳
+gmt-range: §c偏移值必須介於 -12 至 +14 之間。
+gmt-set: §aGMT 時區偏移已設為 %p1%
+gmt-usage: '§c用法: /transactions gmt <偏移>'
+gui-title: §8交易記錄 -
+in-game-only: §c此指令只能在遊戲中使用。
+invalid-command: '&4無效的子指令！'
+invalid-gmt: §c偏移值不正確，請輸入整數。
+next-button: §7下一頁 §f»
+no-permissions: 你沒有權限執行此指令！
+no-transactions-found: 與 %p1% 的交易記錄未找到
+player-not-found: 玩家 %p1% 未找到！
+prev-button: §f«§7 上一頁
+rollback-already-done: "此交易已還原"
+rollback-amount: '金額: %p1%'
+rollback-confirm-title: 交易還原確認
+rollback-failed-deposit: "未能將資金退還給玩家 %p1%!"
+rollback-failed-withdraw: "提款失敗: %p1%"
+rollback-hint: 右鍵點擊以還原此交易
+rollback-insufficient-funds: 玩家 %p1% 的餘額不足，無法還原
+rollback-invalid-transaction: 此交易無法還原
+rollback-notify-receiver: 你向 %p2% 的 %p1% 交易已被還原
+rollback-notify-sender: 你從 %p2% 取得的 %p1% 交易已被退回
+rollback-receiver: '接收人: %p1%'
+rollback-sender: '發送人: %p1%'
+rollback-success: 玩家 %p1% 的金額 %p2% 已成功還原給 %p3%
+search-button: 按暱稱篩選
+search-disabled: 搜尋不可用
+search-results-gui-title: 尋找結果：
+stats-1-week-button: 一週統計資料
+stats-2-weeks-button: 兩週統計資料
+stats-button: §f兩週統計資料
+stats-expense: '§c支出：§c-'
+stats-income: '§a收入：§a+'
+stats-no-expense: '§c支出：無資料'
+stats-no-income: '§a收入：無資料'
+stats-no-transactions: 目前沒有交易記錄
+test-message: 檔案更新測試訊息！
+time: '§f時間：'
+tr-usage: '用法: /tr <玩家>'
+transaction-admin-give: §a收到資金
+transaction-admin-take: §c資金已扣除
+transaction-balance-reset: §e餘額已重設
+transaction-balance-set: §e餘額已設定
+transaction-deposit: §a資金已存入
+transaction-pay-received: §a收到來自玩家 %p1% 的資金
+transaction-pay-sent: §c已轉帳給玩家 %p1%
+transaction-rollback-received: 資金已退款
+transaction-withdraw: §c資金已提出
+update-available: '§b有新版本 Transactions 可用：§e%p2%§b！下載連結：%p3%'
+update-success: 配置和語言檔案成功更新！
+vault-not-found: '§c[交易系統] 錯誤：未找到 Vault 或未安裝經濟插件！'
+villagermarket-buy: '*c購買物品'
+villagermarket-sell: '&a販售物品'

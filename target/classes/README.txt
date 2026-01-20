@@ -1,0 +1,1 @@
+when downloading a new version of the plugin, please delete the "lang" folder in the plugin folder. And install the new version
