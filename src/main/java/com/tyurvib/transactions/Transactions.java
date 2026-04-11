@@ -1,6 +1,7 @@
 package com.tyurvib.transactions;
 
 import com.tyurvib.transactions.command.TransactionsCommand;
+import com.tyurvib.transactions.listener.QuickShopListener;
 import com.tyurvib.transactions.listener.TransactionListener;
 import com.tyurvib.transactions.manager.ConfigManager;
 import com.tyurvib.transactions.manager.DatabaseManager;
@@ -35,6 +36,11 @@ public class Transactions extends JavaPlugin {
         this.updater = new Updater(this, "GbElTVjA");
         getCommand("transactions").setExecutor(new TransactionsCommand(this));
         getServer().getPluginManager().registerEvents(new TransactionListener(this), this);
+        // Подключение QuickShop Hikari если присутствует
+        if (getServer().getPluginManager().getPlugin("QuickShop-Hikari") != null) {
+            getServer().getPluginManager().registerEvents(new QuickShopListener(this), this);
+            getLogger().info("QuickShop-Hikari найден, логирование покупок включено.");
+        }
     }
 
     @Override

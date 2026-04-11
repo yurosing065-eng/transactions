@@ -67,6 +67,21 @@ public class DatabaseManager {
             """);
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_player ON transactions (player_uuid);");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON transactions (timestamp DESC);");
+            stmt.execute("""
+    CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_uuid TEXT NOT NULL,
+        type TEXT NOT NULL,
+        key TEXT NOT NULL,
+        amount REAL NOT NULL,
+        balance_before REAL DEFAULT 0.0,
+        balance_after REAL DEFAULT 0.0,
+        timestamp INTEGER NOT NULL,
+        rolled_back BOOLEAN NOT NULL DEFAULT 0,
+        param1 TEXT, param2 TEXT, param3 TEXT,
+        source TEXT
+    );
+""");
         }
     }
 
@@ -74,6 +89,7 @@ public class DatabaseManager {
         try (Statement stmt = db.createStatement()) {
             try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_before REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
             try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_after REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE transactions ADD COLUMN source TEXT;"); } catch (SQLException ignored) {}
         } catch (SQLException e) {
             plugin.getLogger().warning("Ошибка при обновлении колонок базы: " + e.getMessage());
         }
@@ -98,7 +114,7 @@ public class DatabaseManager {
 
     public void queueSaveTransaction(UUID uuid, Transaction t) {
         dbWriteQueue.offer(() -> {
-            String sql = "INSERT INTO transactions (player_uuid, type, key, amount, balance_before, balance_after, timestamp, rolled_back, param1, param2, param3) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            String sql = "INSERT INTO transactions (player_uuid, type, key, amount, balance_before, balance_after, timestamp, rolled_back, param1, param2, param3, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             try (PreparedStatement pstmt = db.prepareStatement(sql)) {
                 pstmt.setString(1, uuid.toString());
                 pstmt.setString(2, t.type.name());
@@ -112,6 +128,8 @@ public class DatabaseManager {
                     if (i < t.params.length && t.params[i] != null) pstmt.setString(9 + i, t.params[i]);
                     else pstmt.setNull(9 + i, Types.VARCHAR);
                 }
+                if (t.source != null) pstmt.setString(12, t.source);
+                else pstmt.setNull(12, Types.VARCHAR);
                 pstmt.executeUpdate();
             } catch (SQLException e) {
                 plugin.getLogger().warning("Error saving transaction: " + e.getMessage());

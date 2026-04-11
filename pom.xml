@@ -69,6 +69,10 @@
           <id>anvilgui-repo</id>
           <url>https://repo.codemc.io/repository/maven-public/</url>
       </repository>
+      <repository>
+          <id>codemc</id>
+          <url>https://repo.codemc.io/repository/maven-public/</url>
+      </repository>
   </repositories>
 
   <dependencies>
@@ -100,6 +104,13 @@
           <groupId>net.wesjd</groupId>
           <artifactId>anvilgui</artifactId>
           <version>1.5.3-SNAPSHOT</version>
+      </dependency>
+      <dependency>
+          <groupId>com.ghostchu</groupId>
+          <artifactId>quickshop-bukkit</artifactId>
+          <version>6.2.0.11</version>
+          <scope>provided</scope>
+          <classifier>shaded</classifier>
       </dependency>
   </dependencies>
 </project>

@@ -24,6 +24,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.server.ServerCommandEvent;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class TransactionListener implements Listener {
@@ -294,11 +295,20 @@ public class TransactionListener implements Listener {
         if (plugin.getTransactionManager().payInProgress.contains(uuid) ||
                 plugin.getTransactionManager().ecoInProgress.contains(uuid)) return;
 
+        // Определяем источник через стек вызовов
+        String source = detectCallingPlugin();
+
         double amount = e.getAmount();
         plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
-            plugin.getTransactionManager().addTransaction(uuid,
-                    new Transaction(Type.INCOME, "transaction-external-deposit", amount, balanceBefore, balanceBefore + amount));
+
+            // Проверяем включён ли ивент в конфиге
+            String eventKey = "transaction-external-deposit";
+            if (!isEventEnabled(eventKey)) return;
+
+            Transaction t = new Transaction(Type.INCOME, eventKey, amount, balanceBefore, balanceBefore + amount)
+                    .withSource(source);
+            plugin.getTransactionManager().addTransaction(uuid, t);
         });
     }
 
@@ -310,14 +320,50 @@ public class TransactionListener implements Listener {
         if (plugin.getTransactionManager().payInProgress.contains(uuid) ||
                 plugin.getTransactionManager().ecoInProgress.contains(uuid)) return;
 
+        String source = detectCallingPlugin();
+
         double amount = e.getAmount();
         plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
             double balanceAfter = Math.max(0, balanceBefore - amount);
 
+            String eventKey = "transaction-external-withdraw";
+            if (!isEventEnabled(eventKey)) return;
+
             if (balanceBefore - balanceAfter > 0 || amount > 0) {
-                plugin.getTransactionManager().addTransaction(uuid,
-                        new Transaction(Type.EXPENSE, "transaction-external-withdraw", amount, balanceBefore, balanceAfter));
+                Transaction t = new Transaction(Type.EXPENSE, eventKey, amount, balanceBefore, balanceAfter)
+                        .withSource(source);
+                plugin.getTransactionManager().addTransaction(uuid, t);
             }
         });
-    }}
+    }
+    private boolean isEventEnabled(String key) {
+        Map<String, Boolean> events = plugin.getConfigManager().eventEnabled;
+        // Если ключ не настроен в конфиге — по умолчанию включён
+        return events.getOrDefault(key, true);
+    }
+    private String detectCallingPlugin() {
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        for (StackTraceElement el : stack) {
+            String cls = el.getClassName();
+            if (cls.startsWith("java.") || cls.startsWith("sun.")
+                    || cls.startsWith("org.bukkit.") || cls.startsWith("net.milkbowl.")
+                    || cls.startsWith("com.tyurvib.") || cls.startsWith("io.papermc.")
+                    || cls.startsWith("net.minecraft.") || cls.startsWith("com.destroystokyo.")
+                    || cls.startsWith("co.aikar.") || cls.startsWith("com.google.")) continue;
+
+            // Берём первую часть пакета — обычно это имя плагина
+            String[] parts = cls.split("\\.");
+            if (parts.length >= 2) {
+                // Пробуем найти реальное имя плагина через PluginManager
+                for (org.bukkit.plugin.Plugin p : org.bukkit.Bukkit.getPluginManager().getPlugins()) {
+                    if (cls.toLowerCase().contains(p.getName().toLowerCase())) {
+                        return p.getName();
+                    }
+                }
+                return parts[1]; // fallback: второй сегмент пакета
+            }
+        }
+        return "Unknown";
+    }
+}

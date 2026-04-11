@@ -38,6 +38,7 @@ public class ConfigManager {
     public int defaultGmtOffset;
     public boolean logExternalTransactions;
     public int maxDisplayTransactionRange = 90;
+    public Map<String, Boolean> eventEnabled = new HashMap<>();
 
     public ConfigManager(Transactions plugin) {
         this.plugin = plugin;
@@ -71,6 +72,13 @@ public class ConfigManager {
         translations = new HashMap<>();
         for (String key : langConfig.getKeys(false)) {
             translations.put(key, langConfig.getString(key));
+        }
+        eventEnabled.clear();
+        org.bukkit.configuration.ConfigurationSection eventsSection = plugin.getConfig().getConfigurationSection("events");
+        if (eventsSection != null) {
+            for (String eventKey : eventsSection.getKeys(false)) {
+                eventEnabled.put(eventKey, eventsSection.getBoolean(eventKey + ".enabled", true));
+            }
         }
     }
     private void setupLanguageFiles() {

@@ -91,6 +91,9 @@ public class GuiManager {
                                 cm.getAmountFormatter().format(Math.abs(after))));
                     }
                     lore.add("§r§7" + cm.getTranslation("time") + sdf.format(new Date(t.timestamp)));
+                    if (player.hasPermission("transactions.source") && t.source != null && !t.source.isEmpty()) {
+                        lore.add("§r§8" + cm.getTranslation("source-plugin") + "§7" + t.source);
+                    }
                     if (player.hasPermission("transactions.rollback") && t.key.equals("transaction-pay-received") && !t.rolledBack) {
                         lore.add("§r§e" + cm.getTranslation("rollback-hint"));
                     }

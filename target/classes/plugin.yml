@@ -33,6 +33,9 @@ permissions:
   transactions.range:
     description: Allows setting the maximum transaction display range.
     default: op
+  transactions.source:
+    description: Показывает источник плагина в транзакциях
+    default: op
 depend:
   - Vault
   - VaultEvents

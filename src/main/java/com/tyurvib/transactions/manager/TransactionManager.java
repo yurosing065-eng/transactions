@@ -74,6 +74,8 @@ public class TransactionManager {
                                 params.toArray(new String[0]),
                                 rs.getLong("timestamp")
                         );
+                        String src = rs.getString("source");
+                        t.source = (src != null && !src.isEmpty()) ? src : null;
 
                         t.rolledBack = rs.getBoolean("rolled_back");
                         list.add(t);
