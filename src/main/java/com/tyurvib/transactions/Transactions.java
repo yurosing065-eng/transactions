@@ -17,7 +17,7 @@ public class Transactions extends JavaPlugin {
     private TransactionManager transactionManager;
     private GuiManager guiManager;
     private Economy economy;
-    private Updater updater; // Assuming class exists
+    private Updater updater;
 
     @Override
     public void onEnable() {

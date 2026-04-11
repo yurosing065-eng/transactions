@@ -37,142 +37,101 @@ public class GuiManager {
     public void openGUI(Player player, int page, UUID targetUUID, String targetName) {
         TransactionManager tm = plugin.getTransactionManager();
         ConfigManager cm = plugin.getConfigManager();
-        FilterData filter = tm.playerFilters.computeIfAbsent(player.getUniqueId(), k -> new FilterData());
-        List<Transaction> list = tm.getTransactions(targetUUID);
-        List<Transaction> filteredList = new ArrayList<>();
-        long cutoffTimestamp = 0;
 
-        if (filter.timePeriod == TimePeriod.LAST_7_DAYS)
-            cutoffTimestamp = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(7);
-        else if (filter.timePeriod == TimePeriod.LAST_30_DAYS)
-            cutoffTimestamp = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(30);
+        tm.getTransactionsAsync(targetUUID).thenAccept(list -> {
+            FilterData filter = tm.playerFilters.computeIfAbsent(player.getUniqueId(), k -> new FilterData());
+            List<Transaction> filteredList = new ArrayList<>();
+            long now = System.currentTimeMillis();
+            long cutoffTimestamp = (filter.timePeriod == TimePeriod.LAST_7_DAYS) ? now - TimeUnit.DAYS.toMillis(7) :
+                    (filter.timePeriod == TimePeriod.LAST_30_DAYS) ? now - TimeUnit.DAYS.toMillis(30) : 0;
 
-        for (Transaction t : list) {
-            if (filter.timePeriod == TimePeriod.ALL_TIME || t.timestamp >= cutoffTimestamp) {
-                if (filter.filterType == FilterType.ALL ||
-                        (filter.filterType == FilterType.INCOME && t.type == Type.INCOME) ||
-                        (filter.filterType == FilterType.EXPENSE && t.type == Type.EXPENSE) ||
-                        (filter.filterType == FilterType.PAY && (t.key.contains("pay"))) ||
-                        (filter.filterType == FilterType.OTHER && !t.key.contains("pay"))) {
-                    filteredList.add(t);
+            for (Transaction t : list) {
+                if (filter.timePeriod == TimePeriod.ALL_TIME || t.timestamp >= cutoffTimestamp) {
+                    if (filter.filterType == FilterType.ALL ||
+                            (filter.filterType == FilterType.INCOME && t.type == Type.INCOME) ||
+                            (filter.filterType == FilterType.EXPENSE && t.type == Type.EXPENSE) ||
+                            (filter.filterType == FilterType.PAY && t.key.contains("pay")) ||
+                            (filter.filterType == FilterType.OTHER && !t.key.contains("pay"))) {
+                        filteredList.add(t);
+                    }
                 }
             }
-        }
+            filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
 
-        filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
+            double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
+            List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
+            plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+                if (!player.isOnline()) return;
 
+                Inventory inv = Bukkit.createInventory(null, 54, cm.getTranslation("gui-title") + targetName + " (#" + (page + 1) + ")");
 
-        Inventory inv = Bukkit.createInventory(null, 54, cm.getTranslation("gui-title") + targetName + " (#" + (page + 1) + ")");
-        int start = page * 45;
-        int end = Math.min(filteredList.size(), start + 45);
+                int start = page * 45;
+                int end = Math.min(filteredList.size(), start + 45);
 
+                int gmtOffset = tm.playerGmtOffset.getOrDefault(player.getUniqueId(), cm.defaultGmtOffset);
+                SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+                sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (gmtOffset >= 0 ? "+" : "") + gmtOffset));
 
-        double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
-        List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
+                for (int i = start; i < end; i++) {
+                    Transaction t = filteredList.get(i);
+                    ItemStack item = (t.key.contains("pay") && t.params.length > 0)
+                            ? getPlayerHead(t.params[0])
+                            : getHead(getTransactionHeadBase64(t.type));
 
-        int gmtOffset = tm.playerGmtOffset.getOrDefault(player.getUniqueId(), cm.defaultGmtOffset);
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
-        sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (gmtOffset >= 0 ? "+" : "") + gmtOffset));
+                    ItemMeta meta = item.getItemMeta();
+                    String colorCode = cm.getTransactionColor(t.type);
+                    meta.setDisplayName("§r" + colorCode + cm.getTranslatedDescription(t));
 
+                    List<String> lore = new ArrayList<>();
+                    if (tm.showBalance.getOrDefault(player.getUniqueId(), true) && t.type != Type.YELLOW) {
+                        double after = balanceLog.get(i);
+                        double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
+                        lore.add("§r§f" + cm.getTranslation("balance-change",
+                                cm.getAmountFormatter().format(Math.abs(before)),
+                                cm.getAmountFormatter().format(Math.abs(after))));
+                    }
+                    lore.add("§r§7" + cm.getTranslation("time") + sdf.format(new Date(t.timestamp)));
+                    if (player.hasPermission("transactions.rollback") && t.key.equals("transaction-pay-received") && !t.rolledBack) {
+                        lore.add("§r§e" + cm.getTranslation("rollback-hint"));
+                    }
+                    meta.setLore(lore);
+                    item.setItemMeta(meta);
+                    inv.setItem(i - start, item);
+                }
 
-        for (int i = start; i < end; i++) {
-            Transaction t = filteredList.get(i);
-            ItemStack item;
+                setupNavigationButtons(inv, page, end, filteredList.size(), cm, player, targetUUID, targetName, filter, list);
 
+                tm.currentPage.put(player.getUniqueId(), page);
+                tm.searchTargetPlayer.put(player.getUniqueId(), targetName);
+                tm.rollbackTargetUUID.put(player.getUniqueId(), targetUUID);
 
-            if (t.key.contains("pay") && t.params.length > 0) {
-                item = getPlayerHead(t.params[0]);
-            } else {
-                item = getHead(getTransactionHeadBase64(t.type));
-            }
+                player.openInventory(inv);
+            });
+        });
+    }
 
-            ItemMeta meta = item.getItemMeta();
-            String colorCode = cm.getTransactionColor(t.type);
-
-
-            meta.setDisplayName("§r" + colorCode + cm.getTranslatedDescription(t));
-
-            List<String> lore = new ArrayList<>();
-
-
-            if (tm.showBalance.getOrDefault(player.getUniqueId(), true) && t.type != Type.YELLOW) {
-                double after = balanceLog.get(i);
-                double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
-
-                String balanceText = cm.getTranslation("balance-change",
-                        cm.getAmountFormatter().format(Math.abs(before)),
-                        cm.getAmountFormatter().format(Math.abs(after)));
-
-                lore.add("§r§f" + balanceText);
-            }
-
-
-            lore.add("§r§7" + cm.getTranslation("time") + sdf.format(new Date(t.timestamp)));
-
-            if (player.hasPermission("transactions.rollback") && t.key.equals("transaction-pay-received") && !t.rolledBack) {
-                lore.add("§r§e" + cm.getTranslation("rollback-hint"));
-            }
-
-            meta.setLore(lore);
-            item.setItemMeta(meta);
-            inv.setItem(i - start, item);
-        }
-
-
+    private void setupNavigationButtons(Inventory inv, int page, int end, int totalSize, ConfigManager cm, Player player, UUID targetUUID, String targetName, FilterData filter, List<Transaction> allTransactions) {
         if (page > 0) inv.setItem(45, createButton(Material.ARROW, "§r" + cm.getTranslation("prev-button")));
-        if (end < filteredList.size()) inv.setItem(53, createButton(Material.ARROW, "§r" + cm.getTranslation("next-button")));
-
+        if (end < totalSize) inv.setItem(53, createButton(Material.ARROW, "§r" + cm.getTranslation("next-button")));
 
         if (player.isOp()) {
-            ItemStack dlBtn = getHead("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvODgyZmFmOWE1ODRjNGQ2NzZkNzMwYjIzZjg5NDJiYjk5N2ZhM2RhZDQ2ZDRmNjVlMjg4YzM5ZWI0NzFjZTcifX19");
-            ItemMeta dlMeta = dlBtn.getItemMeta();
-            dlMeta.setDisplayName("§r§6" + cm.getTranslation("download-button"));
-            dlBtn.setItemMeta(dlMeta);
-            inv.setItem(46, dlBtn);
+            inv.setItem(46, createHeadButton("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvODgyZmFmOWE1ODRjNGQ2NzZkNzMwYjIzZjg5NDJiYjk5N2ZhM2RhZDQ2ZDRmNjVlMjg4YzM5ZWI0NzFjZTcifX19", "§r§6" + cm.getTranslation("download-button")));
         }
 
-
-        ItemStack filterBtn = getHead("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGNlZTNhZWFkZDY4YjI0N2ZkZmUzZWE3YmMwMDhkMTJmZDk3YWMxNWVkMTViZjc0Njg1NDNhMDY2ODAifX19");
+        ItemStack filterBtn = createHeadButton("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZGNlZTNhZWFkZDY4YjI0N2ZkZmUzZWE3YmMwMDhkMTJmZDk3YWMxNWVkMTViZjc0Njg1NDNhMDY2ODAifX19", "§r" + cm.getTranslation("filter-button"));
         ItemMeta fm = filterBtn.getItemMeta();
-        fm.setDisplayName("§r" + cm.getTranslation("filter-button"));
         fm.setLore(Collections.singletonList("§r§7" + cm.getTranslation("filter-current-type") + cm.getTranslation("filter-type-" + filter.filterType.name().toLowerCase())));
         filterBtn.setItemMeta(fm);
         inv.setItem(48, filterBtn);
 
         if (cm.showStatsButton) {
-            ItemStack statsButton = getHead("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTc5NjczMjY0ZWY5NTVmM2Q5NjBlNjk3MzM0MWMxZDhkNjRjZTVjM2YyMzNjYTM0YjI3OTMzNTA4YzM2ODdmMSJ9fX0=");
-            ItemMeta statsMeta = statsButton.getItemMeta();
-            statsMeta.setDisplayName("§r§6" + cm.getTranslation("stats-1-week-button"));
-
-            List<String> statsLore = new ArrayList<>();
-            double income = 0, expense = 0;
-
-            long cutoff = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(7);
-            for (Transaction trans : list) {
-                if (trans.timestamp >= cutoff) {
-                    if (trans.type == Type.INCOME) income += trans.amount;
-                    else if (trans.type == Type.EXPENSE) expense += trans.amount;
-                }
-            }
-            statsLore.add("§r§7" + cm.getTranslation("stats-income") + "§a" + cm.getAmountFormatter().format(income) + " " + cm.prefix);
-            statsLore.add("§r§7" + cm.getTranslation("stats-expense") + "§c" + cm.getAmountFormatter().format(expense) + " " + cm.prefix);
-
-            statsMeta.setLore(statsLore);
-            statsButton.setItemMeta(statsMeta);
-            inv.setItem(49, statsButton);
+            inv.setItem(49, createStatsButton(allTransactions, cm));
         }
 
-      ItemStack searchBtn = player.getUniqueId().equals(targetUUID) || player.hasPermission("transactions.view.others")
+        ItemStack searchBtn = (player.getUniqueId().equals(targetUUID) || player.hasPermission("transactions.view.others"))
                 ? createHeadButton(SEARCH_HEAD, "§r§9" + cm.getTranslation("search-button"))
                 : createButton(Material.BARRIER, "§r§c" + cm.getTranslation("search-disabled"));
         inv.setItem(50, searchBtn);
-
-
-        tm.currentPage.put(player.getUniqueId(), page);
-        tm.searchTargetPlayer.put(player.getUniqueId(), targetName);
-        tm.rollbackTargetUUID.put(player.getUniqueId(), targetUUID);
-
-        player.openInventory(inv);
     }
     public void openFilterGUI(Player player) {
         Inventory inv = Bukkit.createInventory(null, 9, plugin.getConfigManager().getTranslation("filter-gui-title"));
@@ -214,6 +173,29 @@ public class GuiManager {
         inv.setItem(13, info);
         inv.setItem(15, cancel);
         player.openInventory(inv);
+    }
+    private ItemStack createStatsButton(List<Transaction> allTransactions, ConfigManager cm) {
+        ItemStack statsButton = getHead("eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTc5NjczMjY0ZWY5NTVmM2Q5NjBlNjk3MzM0MWMxZDhkNjRjZTVjM2YyMzNjYTM0YjI3OTMzNTA4YzM2ODdmMSJ9fX0=");
+        ItemMeta statsMeta = statsButton.getItemMeta();
+        statsMeta.setDisplayName("§r§6" + cm.getTranslation("stats-1-week-button"));
+
+        List<String> statsLore = new ArrayList<>();
+        double income = 0, expense = 0;
+
+        long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7);
+        for (Transaction trans : allTransactions) {
+            if (trans.timestamp >= cutoff) {
+                if (trans.type == Type.INCOME) income += trans.amount;
+                else if (trans.type == Type.EXPENSE) expense += trans.amount;
+            }
+        }
+
+        statsLore.add("§r§7" + cm.getTranslation("stats-income") + "§a" + cm.getAmountFormatter().format(income) + " " + cm.prefix);
+        statsLore.add("§r§7" + cm.getTranslation("stats-expense") + "§c" + cm.getAmountFormatter().format(expense) + " " + cm.prefix);
+
+        statsMeta.setLore(statsLore);
+        statsButton.setItemMeta(statsMeta);
+        return statsButton;
     }
 
     private List<Double> calculateBalanceLog(List<Transaction> transactions, double currentBalance) {

@@ -16,6 +16,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
@@ -44,10 +45,14 @@ public class TransactionManager {
         startSaveTask();
     }
 
-    public List<Transaction> getTransactions(UUID uuid) {
-        return transactionCache.computeIfAbsent(uuid, k -> {
-            List<Transaction> list = new ArrayList<>();
+    public CompletableFuture<List<Transaction>> getTransactionsAsync(UUID uuid) {
+        if (transactionCache.containsKey(uuid)) {
+            return CompletableFuture.completedFuture(transactionCache.get(uuid));
+        }
 
+
+        return CompletableFuture.supplyAsync(() -> {
+            List<Transaction> list = new ArrayList<>();
             String sql = "SELECT * FROM transactions WHERE player_uuid = ? ORDER BY timestamp DESC LIMIT 1000";
 
             try (PreparedStatement ps = plugin.getDatabaseManager().db.prepareStatement(sql)) {
@@ -75,12 +80,14 @@ public class TransactionManager {
                     }
                 }
             } catch (SQLException e) {
-                plugin.getLogger().warning("Ошибка загрузки транзакций игрока " + uuid + ": " + e.getMessage());
+                plugin.getLogger().warning("Ошибка загрузки транзакций для " + uuid + ": " + e.getMessage());
             }
-            return list;
-        });
-    }
 
+            transactionCache.put(uuid, list);
+            return list;
+
+        }, runnable -> plugin.getServer().getAsyncScheduler().runNow(plugin, task -> runnable.run()));
+    }
     private void startSaveTask() {
         plugin.getServer().getAsyncScheduler().runAtFixedRate(plugin, (task) -> {
             saveDirtyPlayers();
@@ -95,6 +102,14 @@ public class TransactionManager {
 
         dirtyPlayers.add(uuid);
         plugin.getDatabaseManager().queueSaveTransaction(uuid, t);
+    }
+    public List<Transaction> getTransactions(UUID uuid) {
+        try {
+            return getTransactionsAsync(uuid).get(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Ошибка при получении транзакций для " + uuid);
+            return transactionCache.getOrDefault(uuid, new ArrayList<>());
+        }
     }
 
     public void clearCache() {

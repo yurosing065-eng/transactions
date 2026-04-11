@@ -1,5 +1,5 @@
 package com.tyurvib.transactions.command;
-//не должно вызывать лагов
+
 import com.tyurvib.transactions.Transactions;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -31,87 +31,97 @@ public class TransactionsCommand implements CommandExecutor, TabExecutor {
         }
 
         if (args.length == 0) {
+            if (!p.hasPermission("transactions.use")) return noPerm(p);
             plugin.getGuiManager().openGUI(p, 0, p.getUniqueId(), p.getName());
             return true;
         }
 
         String sub = args[0].toLowerCase();
 
-        if (sub.equals("reload") || sub.equals("update")) {
-            if (!p.isOp()) return noPerm(p);
-            plugin.getConfigManager().loadConfigValues();
-            p.sendMessage("§aConfig reloaded.");
-            return true;
-        }
+        switch (sub) {
+            case "reload", "update" -> {
+                if (!p.hasPermission("transactions.reload")) return noPerm(p);
+                if (sub.equals("update")) plugin.getConfigManager().updateFiles();
 
-        if (sub.equals("clean")) {
-            if (!p.isOp()) return noPerm(p);
-            plugin.getDatabaseManager().clearAllTransactionsAsync();
-            p.sendMessage(plugin.getConfigManager().getTranslation("cleanup-executed"));
-            return true;
-        }
-
-        if (sub.equals("range") && p.isOp()) {
-            if (args.length != 2) { p.sendMessage("Usage: /tr range <days>"); return true; }
-            try {
-                int days = Integer.parseInt(args[1]);
-                plugin.getConfig().set("max-display-transaction-range", days);
-                plugin.saveConfig();
                 plugin.getConfigManager().loadConfigValues();
-                p.sendMessage("Range set to " + days);
-            } catch (NumberFormatException e) { p.sendMessage("Invalid number"); }
-            return true;
-        }
-
-        if (sub.equals("gmt")) {
-            if (args.length != 2) {
-                p.sendMessage(plugin.getConfigManager().getTranslation("gmt-usage"));
+                p.sendMessage("§a" + plugin.getConfigManager().getTranslation(sub.equals("update") ? "update-success" : "config-reloaded"));
                 return true;
             }
-            try {
-                int gmt = Integer.parseInt(args[1]);
-                plugin.getTransactionManager().playerGmtOffset.put(p.getUniqueId(), gmt);
+
+            case "clean" -> {
+                if (!p.hasPermission("transactions.clean")) return noPerm(p);
+                plugin.getDatabaseManager().clearAllTransactionsAsync();
+                p.sendMessage(plugin.getConfigManager().getTranslation("cleanup-executed"));
+                return true;
+            }
+
+            case "range" -> {
+                if (!p.hasPermission("transactions.range")) return noPerm(p);
+                if (args.length != 2) {
+                    p.sendMessage("§cUsage: /tr range <days>");
+                    return true;
+                }
+                try {
+                    int days = Integer.parseInt(args[1]);
+                    plugin.getConfig().set("max-display-transaction-range", days);
+                    plugin.saveConfig();
+                    plugin.getConfigManager().loadConfigValues();
+                    p.sendMessage("§aRange set to " + days);
+                } catch (NumberFormatException e) {
+                    p.sendMessage("§cInvalid number");
+                }
+                return true;
+            }
+
+            case "gmt" -> {
+                if (!p.hasPermission("transactions.gmt")) return noPerm(p);
+                if (args.length != 2) {
+                    p.sendMessage(plugin.getConfigManager().getTranslation("gmt-usage"));
+                    return true;
+                }
+                try {
+                    int gmt = Integer.parseInt(args[1]);
+                    plugin.getTransactionManager().playerGmtOffset.put(p.getUniqueId(), gmt);
+                    plugin.getTransactionManager().markDirty(p.getUniqueId());
+                    p.sendMessage(plugin.getConfigManager().getTranslation("gmt-set", args[1]));
+                } catch (NumberFormatException e) {
+                    p.sendMessage(plugin.getConfigManager().getTranslation("invalid-gmt"));
+                }
+                return true;
+            }
+
+            case "balance" -> {
+                if (!p.hasPermission("transactions.balance")) return noPerm(p);
+                if (!plugin.getConfigManager().allowBalanceToggle) return true;
+
+                boolean state = args.length > 1 && args[1].equalsIgnoreCase("on");
+                plugin.getTransactionManager().showBalance.put(p.getUniqueId(), state);
                 plugin.getTransactionManager().markDirty(p.getUniqueId());
-                p.sendMessage(plugin.getConfigManager().getTranslation("gmt-set", args[1]));
-            } catch (NumberFormatException e) {
-                p.sendMessage(plugin.getConfigManager().getTranslation("invalid-gmt"));
-            }
-            return true;
-        }
-
-        if (sub.equals("balance") && plugin.getConfigManager().allowBalanceToggle) {
-            boolean state = args.length > 1 && args[1].equalsIgnoreCase("on");
-            plugin.getTransactionManager().showBalance.put(p.getUniqueId(), state);
-            plugin.getTransactionManager().markDirty(p.getUniqueId());
-            p.sendMessage(state ? "Balance ON" : "Balance OFF");
-            return true;
-        }
-
-        if (sub.equals("player") && p.hasPermission("transactions.view.others")) {
-            if (args.length < 2) { p.sendMessage("Usage: /tr player <name>"); return true; }
-            OfflinePlayer target = Bukkit.getOfflinePlayer(args[1]);
-            if (!target.hasPlayedBefore()) { p.sendMessage("Player not found."); return true; }
-
-            if (args.length == 3 && args[2].equalsIgnoreCase("txt") && p.isOp()) {
-                plugin.getTransactionManager().downloadTransactionsToTxt(p.getUniqueId(), target.getUniqueId(), target.getName());
-                return true;
-            }
-            plugin.getGuiManager().openGUI(p, 0, target.getUniqueId(), target.getName());
-            return true;
-        }
-        if (sub.equals("reload") || sub.equals("update")) {
-            if (!p.isOp()) {
-                p.sendMessage(plugin.getConfigManager().getTranslation("no-permissions"));
+                p.sendMessage(state ? "§aBalance ON" : "§cBalance OFF");
                 return true;
             }
 
-            if (sub.equals("update")) {
-                plugin.getConfigManager().updateFiles();
-            }
+            case "player" -> {
+                if (!p.hasPermission("transactions.view.others")) return noPerm(p);
+                if (args.length < 2) {
+                    p.sendMessage("§cUsage: /tr player <name> [txt]");
+                    return true;
+                }
 
-            plugin.getConfigManager().loadConfigValues();
-            p.sendMessage("§a" + plugin.getConfigManager().getTranslation(sub.equals("update") ? "update-success" : "config-reloaded"));
-            return true;
+                OfflinePlayer target = Bukkit.getOfflinePlayer(args[1]);
+                if (!target.hasPlayedBefore() && !target.isOnline()) {
+                    p.sendMessage("§cPlayer not found.");
+                    return true;
+                }
+                if (args.length == 3 && args[2].equalsIgnoreCase("txt")) {
+                    if (!p.hasPermission("transactions.download")) return noPerm(p);
+                    plugin.getTransactionManager().downloadTransactionsToTxt(p.getUniqueId(), target.getUniqueId(), target.getName());
+                    return true;
+                }
+
+                plugin.getGuiManager().openGUI(p, 0, target.getUniqueId(), target.getName());
+                return true;
+            }
         }
 
         return true;
@@ -124,32 +134,46 @@ public class TransactionsCommand implements CommandExecutor, TabExecutor {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command cmd, String label, String[] args) {
+        if (!(sender instanceof Player p)) return Collections.emptyList();
+
         if (args.length == 1) {
             List<String> completions = new ArrayList<>();
             String input = args[0].toLowerCase();
-            List<String> subs = new ArrayList<>(Arrays.asList("gmt", "balance", "player"));
-            if (sender.isOp()) subs.addAll(Arrays.asList("reload", "update", "clean", "range"));
 
-            for (String s : subs) {
-                if (s.startsWith(input)) completions.add(s);
+            if (p.hasPermission("transactions.gmt")) completions.add("gmt");
+            if (p.hasPermission("transactions.balance")) completions.add("balance");
+            if (p.hasPermission("transactions.view.others")) completions.add("player");
+            if (p.hasPermission("transactions.reload")) {
+                completions.add("reload");
+                completions.add("update");
             }
-            return completions;
-        }
+            if (p.hasPermission("transactions.clean")) completions.add("clean");
+            if (p.hasPermission("transactions.range")) completions.add("range");
 
-
-        if (args.length == 2 && args[0].equalsIgnoreCase("player") && sender.hasPermission("transactions.view.others")) {
-            String input = args[1].toLowerCase();
-            return Bukkit.getOnlinePlayers().stream()
-                    .map(Player::getName)
-                    .filter(name -> name.toLowerCase().startsWith(input))
+            return completions.stream()
+                    .filter(s -> s.startsWith(input))
                     .collect(Collectors.toList());
         }
 
+        if (args.length == 2) {
+            String sub = args[0].toLowerCase();
+            if (sub.equals("player") && p.hasPermission("transactions.view.others")) {
+                return Bukkit.getOnlinePlayers().stream()
+                        .map(Player::getName)
+                        .filter(name -> name.toLowerCase().startsWith(args[1].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+            if (sub.equals("balance") && p.hasPermission("transactions.balance")) {
+                return Arrays.asList("on", "off").stream()
+                        .filter(s -> s.startsWith(args[1].toLowerCase()))
+                        .collect(Collectors.toList());
+            }
+        }
 
-        if (args.length == 2 && args[0].equalsIgnoreCase("balance")) {
-            return Arrays.asList("on", "off").stream()
-                    .filter(s -> s.startsWith(args[1].toLowerCase()))
-                    .collect(Collectors.toList());
+        if (args.length == 3 && args[0].equalsIgnoreCase("player")) {
+            if (p.hasPermission("transactions.download")) {
+                if ("txt".startsWith(args[2].toLowerCase())) return List.of("txt");
+            }
         }
 
         return Collections.emptyList();

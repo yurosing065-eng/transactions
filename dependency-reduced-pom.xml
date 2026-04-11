@@ -4,7 +4,7 @@
   <groupId>com.tyurvib</groupId>
   <artifactId>Transactions-folia</artifactId>
   <name>Transactions</name>
-  <version>1.3.9</version>
+  <version>1.4.1</version>
   <build>
     <resources>
       <resource>

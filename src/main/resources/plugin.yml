@@ -5,9 +5,34 @@ api-version: 1.21
 folia-supported: true
 commands:
   transactions:
-    description: Открыть историю транзакций
-    usage: /transactions
+    description: Main command for Transactions.
     aliases: [tr]
+
+permissions:
+  transactions.use:
+    description: Allows opening your own transaction GUI.
+    default: true
+  transactions.gmt:
+    description: Allows changing your personal time zone offset.
+    default: true
+  transactions.balance:
+    description: Allows toggling the visibility of the balance.
+    default: true
+  transactions.view.others:
+    description: Allows viewing transaction logs of other players.
+    default: op
+  transactions.download:
+    description: Allows downloading player logs as a .txt file.
+    default: op
+  transactions.reload:
+    description: Allows reloading the plugin configuration.
+    default: op
+  transactions.clean:
+    description: Allows clearing the entire transaction database.
+    default: op
+  transactions.range:
+    description: Allows setting the maximum transaction display range.
+    default: op
 depend:
   - Vault
   - VaultEvents

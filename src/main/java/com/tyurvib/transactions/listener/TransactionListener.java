@@ -56,11 +56,7 @@ public class TransactionListener implements Listener {
         String rollbackTitle = ChatColor.stripColor(plugin.getConfigManager().getTranslation("rollback-confirm-title"));
         String strippedTitle = ChatColor.stripColor(title);
 
-        boolean isOurGui = strippedTitle.contains(mainTitle) ||
-                strippedTitle.contains(filterTitle) ||
-                strippedTitle.contains(rollbackTitle);
-
-        if (!isOurGui) return;
+        if (!strippedTitle.contains(mainTitle) && !strippedTitle.contains(filterTitle) && !strippedTitle.contains(rollbackTitle)) return;
         e.setCancelled(true);
 
         TransactionManager tm = plugin.getTransactionManager();
@@ -68,7 +64,6 @@ public class TransactionListener implements Listener {
         String targetName = tm.searchTargetPlayer.getOrDefault(player.getUniqueId(), player.getName());
         int page = tm.currentPage.getOrDefault(player.getUniqueId(), 0);
         int slot = e.getSlot();
-
 
         if (strippedTitle.contains(filterTitle)) {
             FilterData fd = tm.playerFilters.computeIfAbsent(player.getUniqueId(), k -> new FilterData());
@@ -83,7 +78,7 @@ public class TransactionListener implements Listener {
             return;
         }
 
-
+        // Логика подтверждения отката
         if (strippedTitle.contains(rollbackTitle)) {
             if (slot == 11) {
                 Transaction t = tm.pendingRollback.get(player.getUniqueId());
@@ -97,39 +92,21 @@ public class TransactionListener implements Listener {
             return;
         }
 
-
-
+        // Навигация
         if (e.getCurrentItem().getType() == Material.ARROW) {
             String name = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName());
-            String prevName = ChatColor.stripColor(plugin.getConfigManager().getTranslation("prev-button"));
-            String nextName = ChatColor.stripColor(plugin.getConfigManager().getTranslation("next-button"));
-
-            if (name.contains(prevName)) {
+            if (name.contains(ChatColor.stripColor(plugin.getConfigManager().getTranslation("prev-button")))) {
                 if (page > 0) plugin.getGuiManager().openGUI(player, page - 1, targetUUID, targetName);
-            } else if (name.contains(nextName)) {
+            } else if (name.contains(ChatColor.stripColor(plugin.getConfigManager().getTranslation("next-button")))) {
                 plugin.getGuiManager().openGUI(player, page + 1, targetUUID, targetName);
             }
             return;
         }
 
-
-        if (e.getCurrentItem().getType() == Material.BARRIER && slot == 50) {
-            plugin.getGuiManager().openGUI(player, page, targetUUID, targetName);
-            return;
-        }
-
-
         if (slot == 48) {
             plugin.getGuiManager().openFilterGUI(player);
             return;
         }
-
-
-        if (slot == 46 && player.isOp()) {
-            tm.downloadTransactionsToTxt(player.getUniqueId(), targetUUID, targetName);
-            return;
-        }
-
 
         if (slot == 50) {
             if (player.getUniqueId().equals(targetUUID) || player.hasPermission("transactions.view.others")) {
@@ -141,124 +118,58 @@ public class TransactionListener implements Listener {
         }
 
         if (e.getClick().isRightClick() && player.hasPermission("transactions.rollback")) {
-            List<Transaction> list = tm.getTransactions(targetUUID);
-
-            int index = slot + (page * 45);
-
-            if (index >= 0 && index < list.size()) {
-                Transaction t = list.get(index);
-                if (t.key.equals("transaction-pay-received") && !t.rolledBack) {
-                    plugin.getGuiManager().openRollbackGUI(player, t, targetUUID, targetName);
+            tm.getTransactionsAsync(targetUUID).thenAccept(list -> {
+                int index = slot + (page * 45);
+                if (index >= 0 && index < list.size()) {
+                    Transaction t = list.get(index);
+                    if (t.key.equals("transaction-pay-received") && !t.rolledBack) {
+                        plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+                            plugin.getGuiManager().openRollbackGUI(player, t, targetUUID, targetName);
+                        });
+                    }
                 }
-            }
+            });
         }
     }
-
-
     private void performRollback(Player admin, Transaction t, UUID targetUUID, String targetName) {
         if (t.rolledBack) {
             admin.sendMessage("§c" + plugin.getConfigManager().getTranslation("rollback-already-done"));
             return;
         }
 
-        String senderName = t.params[0];
-        OfflinePlayer sender = Bukkit.getOfflinePlayer(senderName);
-        OfflinePlayer receiver = Bukkit.getOfflinePlayer(targetName);
-        double amount = t.amount;
+        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+            String senderName = t.params[0];
+            OfflinePlayer sender = Bukkit.getOfflinePlayer(senderName);
+            OfflinePlayer receiver = Bukkit.getOfflinePlayer(targetName);
+            double amount = t.amount;
 
-        if (!plugin.getEconomy().has(receiver, amount)) {
-            admin.sendMessage("§c" + plugin.getConfigManager().getTranslation("rollback-insufficient-funds", targetName));
-            return;
-        }
-
-        double receiverBalBefore = plugin.getEconomy().getBalance(receiver);
-        double senderBalBefore = plugin.getEconomy().getBalance(sender);
-
-
-        EconomyResponse w = plugin.getEconomy().withdrawPlayer(receiver, amount);
-        if (!w.transactionSuccess()) {
-            admin.sendMessage("§cError withdrawing: " + w.errorMessage);
-            return;
-        }
-
-        EconomyResponse d = plugin.getEconomy().depositPlayer(sender, amount);
-        if (!d.transactionSuccess()) {
-
-            plugin.getEconomy().depositPlayer(receiver, amount);
-            admin.sendMessage("§cError depositing to sender.");
-            return;
-        }
-
-        t.rolledBack = true;
-        plugin.getDatabaseManager().updateRollbackStatus(targetUUID, t.timestamp, t.key, true);
-
-        plugin.getTransactionManager().addTransaction(receiver.getUniqueId(), new Transaction(
-                Type.EXPENSE,
-                "transaction-rollback",
-                amount,
-                receiverBalBefore,
-                receiverBalBefore - amount,
-                senderName
-        ));
-
-        plugin.getTransactionManager().addTransaction(sender.getUniqueId(), new Transaction(
-                Type.INCOME,
-                "transaction-rollback-received",
-                amount,
-                senderBalBefore,
-                senderBalBefore + amount,
-                targetName
-        ));
-
-        admin.sendMessage("§aRollback successful.");
-        plugin.getGuiManager().openGUI(admin, 0, targetUUID, targetName);
-    }
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onCommandPreprocess(PlayerCommandPreprocessEvent e) {
-        if (e.isCancelled()) return;
-        String[] args = e.getMessage().substring(1).split(" ");
-        handleEcoCommand(e.getPlayer(), args);
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onServerCommand(ServerCommandEvent e) {
-        handleEcoCommand(null, e.getCommand().split(" "));
-    }
-
-    private void handleEcoCommand(Player sender, String[] args) {
-        if (args.length < 3) return;
-        String cmd = args[0].toLowerCase();
-        if (!cmd.equals("eco") && !cmd.equals("economy")) return;
-
-        String sub = args[1].toLowerCase();
-        OfflinePlayer target = Bukkit.getOfflinePlayer(args[2]);
-        if (target == null || (!target.hasPlayedBefore() && !target.isOnline())) return;
-
-        UUID tId = target.getUniqueId();
-        String adminName = (sender != null) ? sender.getName() : "Console";
-        TransactionManager tm = plugin.getTransactionManager();
-
-        double balanceBefore = plugin.getEconomy().getBalance(target);
-        tm.ecoInProgress.add(tId);
-        Bukkit.getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
-            double balanceAfter = plugin.getEconomy().getBalance(target);
-            double delta = Math.abs(balanceAfter - balanceBefore);
-
-            if (sub.equals("set") || sub.equals("reset")) {
-                tm.addTransaction(tId, new Transaction(
-                        Type.YELLOW, "transaction-balance-set", balanceAfter, balanceBefore, balanceAfter, adminName
-                ));
-            } else if (delta > 0.001) {
-                Type type = (balanceAfter > balanceBefore) ? Type.INCOME : Type.EXPENSE;
-                String key = (type == Type.INCOME) ? "transaction-admin-give" : "transaction-admin-take";
-
-                tm.addTransaction(tId, new Transaction(
-                        type, key, delta, balanceBefore, balanceAfter, adminName
-                ));
+            if (!plugin.getEconomy().has(receiver, amount)) {
+                admin.sendMessage("§c" + plugin.getConfigManager().getTranslation("rollback-insufficient-funds", targetName));
+                return;
             }
 
-            tm.ecoInProgress.remove(tId);
-        }, 2L);
+            double recBalBefore = plugin.getEconomy().getBalance(receiver);
+            double senBalBefore = plugin.getEconomy().getBalance(sender);
+
+            EconomyResponse w = plugin.getEconomy().withdrawPlayer(receiver, amount);
+            if (w.transactionSuccess()) {
+                plugin.getEconomy().depositPlayer(sender, amount);
+
+                t.rolledBack = true;
+                plugin.getDatabaseManager().updateRollbackStatus(targetUUID, t.timestamp, t.key, true);
+
+                plugin.getTransactionManager().addTransaction(receiver.getUniqueId(), new Transaction(
+                        Type.EXPENSE, "transaction-rollback", amount, recBalBefore, recBalBefore - amount, senderName));
+
+                plugin.getTransactionManager().addTransaction(sender.getUniqueId(), new Transaction(
+                        Type.INCOME, "transaction-rollback-received", amount, senBalBefore, senBalBefore + amount, targetName));
+
+                admin.sendMessage("§aRollback successful.");
+                plugin.getServer().getRegionScheduler().run(plugin, admin.getLocation(), t2 -> {
+                    plugin.getGuiManager().openGUI(admin, 0, targetUUID, targetName);
+                });
+            }
+        });
     }
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
@@ -267,38 +178,115 @@ public class TransactionListener implements Listener {
 
         e.setCancelled(true);
         String searchName = e.getMessage().trim();
+        if (searchName.isEmpty()) return;
 
-        if (searchName.isEmpty()) {
-            p.sendMessage("§c" + plugin.getConfigManager().getTranslation("search-cancelled"));
-            return;
-        }
+        TransactionManager tm = plugin.getTransactionManager();
+        UUID targetUUID = tm.rollbackTargetUUID.getOrDefault(p.getUniqueId(), p.getUniqueId());
+        String targetName = tm.searchTargetPlayer.getOrDefault(p.getUniqueId(), p.getName());
+        tm.getTransactionsAsync(targetUUID).thenAccept(all -> {
+            List<Transaction> found = all.stream()
+                    .filter(t -> java.util.Arrays.stream(t.params).anyMatch(param -> param.equalsIgnoreCase(searchName)))
+                    .collect(java.util.stream.Collectors.toList());
 
-        UUID targetUUID = plugin.getTransactionManager().rollbackTargetUUID.getOrDefault(p.getUniqueId(), p.getUniqueId());
-        String targetName = plugin.getTransactionManager().searchTargetPlayer.getOrDefault(p.getUniqueId(), p.getName());
-
-        List<Transaction> all = plugin.getTransactionManager().getTransactions(targetUUID);
-
-
-        List<Transaction> found = all.stream()
-                .filter(t -> java.util.Arrays.stream(t.params).anyMatch(param -> param.equalsIgnoreCase(searchName)))
-                .collect(java.util.stream.Collectors.toList());
-
-        if (found.isEmpty()) {
-            p.sendMessage("§c" + plugin.getConfigManager().getTranslation("no-transactions-found", searchName));
-            Bukkit.getRegionScheduler().run(plugin, p.getLocation(), task -> {
+            plugin.getServer().getRegionScheduler().run(plugin, p.getLocation(), task -> {
+                if (found.isEmpty()) {
+                    p.sendMessage("§c" + plugin.getConfigManager().getTranslation("no-transactions-found", searchName));
+                } else {
+                    tm.searchTargetPlayer.put(p.getUniqueId(), searchName);
+                    p.sendMessage("§a" + plugin.getConfigManager().getTranslation("search-success", String.valueOf(found.size())));
+                }
                 plugin.getGuiManager().openGUI(p, 0, targetUUID, targetName);
             });
+        });
+    }
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onCommandPreprocess(PlayerCommandPreprocessEvent e) {
+        String[] args = e.getMessage().substring(1).split(" ");
+        handleEcoCommand(e.getPlayer(), args);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onServerCommand(ServerCommandEvent e) {
+        handleEcoCommand(null, e.getCommand().split(" "));
+    }
+
+    private void handleEcoCommand(Player sender, String[] args) {
+        if (args.length < 2) return;
+
+        String cmd = args[0].toLowerCase();
+        if (!cmd.equals("eco") && !cmd.equals("economy") && !cmd.equals("pay") && !cmd.equals("money")) return;
+
+        TransactionManager tm = plugin.getTransactionManager();
+        String actorName = (sender != null) ? sender.getName() : "Console";
+
+        if (cmd.equals("pay") && args.length >= 3 && sender != null) {
+            String targetName = args[1];
+            OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
+            if (target == null || (!target.hasPlayedBefore() && !target.isOnline())) return;
+
+            UUID senderId = sender.getUniqueId();
+            double senderBalBefore = plugin.getEconomy().getBalance(sender);
+            UUID targetId = target.getUniqueId();
+            double targetBalBefore = plugin.getEconomy().getBalance(target);
+
+            tm.ecoInProgress.add(senderId);
+            tm.ecoInProgress.add(targetId);
+
+            plugin.getServer().getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
+                double senderBalAfter = plugin.getEconomy().getBalance(sender);
+                double senderDelta = senderBalBefore - senderBalAfter;
+                if (senderDelta > 0.01) {
+                    tm.addTransaction(senderId, new Transaction(
+                            Type.EXPENSE, "transaction-pay-sent", senderDelta, senderBalBefore, senderBalAfter, target.getName()
+                    ));
+                }
+
+                double targetBalAfter = plugin.getEconomy().getBalance(target);
+                double targetDelta = targetBalAfter - targetBalBefore;
+                if (targetDelta > 0.01) {
+                    tm.addTransaction(targetId, new Transaction(
+                            Type.INCOME, "transaction-pay-received", targetDelta, targetBalBefore, targetBalAfter, sender.getName()
+                    ));
+                }
+
+                tm.ecoInProgress.remove(senderId);
+                tm.ecoInProgress.remove(targetId);
+            }, 5L);
             return;
         }
 
-        Bukkit.getRegionScheduler().run(plugin, p.getLocation(), task -> {
-            plugin.getTransactionManager().searchTargetPlayer.put(p.getUniqueId(), searchName);
-            plugin.getGuiManager().openGUI(p, 0, targetUUID, targetName);
-            p.sendMessage("§a" + plugin.getConfigManager().getTranslation("search-success", String.valueOf(found.size())));
-        });
-    }
 
-    // ПОЛНЫЙ МЕТОД: onDeposit
+        if ((cmd.equals("eco") || cmd.equals("economy")) && args.length >= 4) {
+            String sub = args[1].toLowerCase();
+            String targetName = args[2];
+            boolean isSet = sub.equals("set") || sub.equals("reset");
+            String key = sub.equals("give") ? "transaction-admin-give" : "transaction-admin-take";
+
+            OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
+            if (target == null || (!target.hasPlayedBefore() && !target.isOnline())) return;
+
+            UUID tId = target.getUniqueId();
+            double balanceBefore = plugin.getEconomy().getBalance(target);
+            tm.ecoInProgress.add(tId);
+
+            plugin.getServer().getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
+                double balanceAfter = plugin.getEconomy().getBalance(target);
+                double delta = balanceAfter - balanceBefore;
+
+                if (isSet) {
+                    tm.addTransaction(tId, new Transaction(
+                            Type.YELLOW, "transaction-balance-set", balanceAfter, balanceBefore, balanceAfter, actorName
+                    ));
+                } else if (Math.abs(delta) > 0.01) {
+                    Type type = (delta > 0) ? Type.INCOME : Type.EXPENSE;
+                    tm.addTransaction(tId, new Transaction(
+                            type, key, Math.abs(delta), balanceBefore, balanceAfter, actorName
+                    ));
+                }
+                tm.ecoInProgress.remove(tId);
+            }, 5L);
+        }
+    }
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onDeposit(PlayerDepositEvent e) {
         if (!plugin.getConfigManager().logExternalTransactions) return;
@@ -307,24 +295,29 @@ public class TransactionListener implements Listener {
                 plugin.getTransactionManager().ecoInProgress.contains(uuid)) return;
 
         double amount = e.getAmount();
-        double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
-
-        // Для внешних событий мы фиксируем баланс ДО и рассчитываем ПОСЛЕ
-        plugin.getTransactionManager().addTransaction(uuid,
-                new Transaction(Type.INCOME, "transaction-external-deposit", amount, balanceBefore, balanceBefore + amount));
+        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+            double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
+            plugin.getTransactionManager().addTransaction(uuid,
+                    new Transaction(Type.INCOME, "transaction-external-deposit", amount, balanceBefore, balanceBefore + amount));
+        });
     }
 
-    // ПОЛНЫЙ МЕТОД: onWithdraw
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWithdraw(PlayerWithdrawEvent e) {
         if (!plugin.getConfigManager().logExternalTransactions) return;
+
         UUID uuid = e.getOfflinePlayer().getUniqueId();
         if (plugin.getTransactionManager().payInProgress.contains(uuid) ||
                 plugin.getTransactionManager().ecoInProgress.contains(uuid)) return;
 
         double amount = e.getAmount();
-        double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
+        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+            double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
+            double balanceAfter = Math.max(0, balanceBefore - amount);
 
-        plugin.getTransactionManager().addTransaction(uuid,
-                new Transaction(Type.EXPENSE, "transaction-external-withdraw", amount, balanceBefore, balanceBefore - amount));
+            if (balanceBefore - balanceAfter > 0 || amount > 0) {
+                plugin.getTransactionManager().addTransaction(uuid,
+                        new Transaction(Type.EXPENSE, "transaction-external-withdraw", amount, balanceBefore, balanceAfter));
+            }
+        });
     }}

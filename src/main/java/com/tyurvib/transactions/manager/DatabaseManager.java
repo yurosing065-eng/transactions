@@ -32,6 +32,7 @@ public class DatabaseManager {
             File dbFile = new File(plugin.getDataFolder(), "transactions.db");
             db = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getPath());
             createTables();
+            updateTableStructure(); // ФИКС: Добавляем колонки в старую базу
             plugin.getLogger().info("SQLite база данных подключена.");
         } catch (SQLException e) {
             plugin.getLogger().severe("Не удалось подключиться к SQLite: " + e.getMessage());
@@ -48,6 +49,8 @@ public class DatabaseManager {
                 type TEXT NOT NULL,
                 key TEXT NOT NULL,
                 amount REAL NOT NULL,
+                balance_before REAL DEFAULT 0.0,
+                balance_after REAL DEFAULT 0.0,
                 timestamp INTEGER NOT NULL,
                 rolled_back BOOLEAN NOT NULL DEFAULT 0,
                 param1 TEXT, param2 TEXT, param3 TEXT
@@ -66,11 +69,13 @@ public class DatabaseManager {
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON transactions (timestamp DESC);");
         }
     }
+
     private void updateTableStructure() {
         try (Statement stmt = db.createStatement()) {
-            stmt.execute("ALTER TABLE transactions ADD COLUMN balance_before REAL DEFAULT 0.0;");
-            stmt.execute("ALTER TABLE transactions ADD COLUMN balance_after REAL DEFAULT 0.0;");
-        } catch (SQLException ignored) {
+            try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_before REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
+            try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_after REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
+        } catch (SQLException e) {
+            plugin.getLogger().warning("Ошибка при обновлении колонок базы: " + e.getMessage());
         }
     }
 
@@ -99,13 +104,13 @@ public class DatabaseManager {
                 pstmt.setString(2, t.type.name());
                 pstmt.setString(3, t.key);
                 pstmt.setDouble(4, t.amount);
-                pstmt.setDouble(5, t.balanceBefore); // Новое
-                pstmt.setDouble(6, t.balanceAfter);  // Новое
+                pstmt.setDouble(5, t.balanceBefore);
+                pstmt.setDouble(6, t.balanceAfter);
                 pstmt.setLong(7, t.timestamp);
                 pstmt.setBoolean(8, t.rolledBack);
                 for (int i = 0; i < 3; i++) {
                     if (i < t.params.length && t.params[i] != null) pstmt.setString(9 + i, t.params[i]);
-                    else pstmt.setNull(9 + i, java.sql.Types.VARCHAR);
+                    else pstmt.setNull(9 + i, Types.VARCHAR);
                 }
                 pstmt.executeUpdate();
             } catch (SQLException e) {
