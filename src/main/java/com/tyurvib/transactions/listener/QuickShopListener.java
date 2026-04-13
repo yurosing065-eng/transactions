@@ -24,61 +24,55 @@ public class QuickShopListener implements Listener {
         this.plugin = plugin;
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true) // LOWEST чтобы сработать первым
     public void onShopPurchase(ShopSuccessPurchaseEvent e) {
         QUser purchaser = e.getPurchaser();
-
         UUID purchaserUUID = purchaser.getUniqueIdIfRealPlayer().orElse(null);
         if (purchaserUUID == null) return;
 
         Shop shop = e.getShop();
         String itemName = shop.getItem().getType().name();
         int qty = e.getAmount();
-        double total = e.getBalance();
+        double total = e.getBalanceWithoutTax(); // полная сумма без налога
 
-        // Имя владельца магазина
         QUser owner = shop.getOwner();
         String shopOwnerName = owner.getUsername();
         if (shopOwnerName == null) shopOwnerName = owner.getDisplay();
 
         TransactionManager tm = plugin.getTransactionManager();
-
-        // shop.isBuying() — магазин ПОКУПАЕТ → игрок ПРОДАЁТ → INCOME
-        // shop.isSelling() — магазин ПРОДАЁТ → игрок ПОКУПАЕТ → EXPENSE
         boolean playerIsSelling = shop.isBuying();
 
-        String eventKey = playerIsSelling
-                ? "transaction-quickshop-sell"
-                : "transaction-quickshop-buy";
-
+        String eventKey = playerIsSelling ? "transaction-quickshop-sell" : "transaction-quickshop-buy";
         if (!plugin.getConfigManager().eventEnabled.getOrDefault(eventKey, true)) return;
 
         Type type = playerIsSelling ? Type.INCOME : Type.EXPENSE;
         OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(purchaserUUID);
         final String finalOwnerName = shopOwnerName;
 
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
-            double balBefore = plugin.getEconomy().getBalance(offlinePlayer);
-            double balAfter = playerIsSelling ? balBefore + total : balBefore - total;
+        // Блокируем ДО того как QuickShop вызовет Vault
+        tm.shopInProgress.add(purchaserUUID);
 
-            tm.ecoInProgress.add(purchaserUUID);
+        // Берём баланс ДО операции прямо сейчас
+        double balBefore = plugin.getEconomy().getBalance(offlinePlayer);
+        double balAfter = playerIsSelling ? balBefore + total : balBefore - total;
 
-            Transaction t = new Transaction(
-                    type,
-                    eventKey,
-                    total,
-                    balBefore,
-                    balAfter,
-                    itemName,             // %p1% — предмет
-                    String.valueOf(qty),  // %p2% — количество
-                    finalOwnerName        // %p3% — владелец магазина
-            ).withSource("QuickShop-Hikari");
+        Transaction t = new Transaction(
+                type,
+                eventKey,
+                total,
+                balBefore,
+                balAfter,
+                itemName,
+                String.valueOf(qty),
+                finalOwnerName
+        ).withSource("QuickShop-Hikari");
 
-            tm.addTransaction(purchaserUUID, t);
+        tm.addTransaction(purchaserUUID, t);
 
-            plugin.getServer().getAsyncScheduler().runDelayed(plugin,
-                    t2 -> tm.ecoInProgress.remove(purchaserUUID),
-                    3, TimeUnit.SECONDS);
-        });
+        // Снимаем блокировку через delay после того как Vault вызовы завершились
+        plugin.getServer().getAsyncScheduler().runDelayed(plugin,
+                t2 -> tm.shopInProgress.remove(purchaserUUID),
+                3, TimeUnit.SECONDS);
     }
+
 }

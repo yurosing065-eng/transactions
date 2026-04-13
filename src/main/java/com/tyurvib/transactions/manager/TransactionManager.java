@@ -38,6 +38,7 @@ public class TransactionManager {
     public final Map<UUID, UUID> rollbackTargetUUID = new HashMap<>();
     public final Map<UUID, String> rollbackTargetName = new HashMap<>();
     public final Set<UUID> payInProgress = ConcurrentHashMap.newKeySet();
+    public final Set<UUID> shopInProgress = ConcurrentHashMap.newKeySet();
     public final Set<UUID> ecoInProgress = ConcurrentHashMap.newKeySet();
 
     public TransactionManager(Transactions plugin) {

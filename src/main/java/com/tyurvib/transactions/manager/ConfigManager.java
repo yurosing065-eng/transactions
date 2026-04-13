@@ -12,9 +12,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,9 +22,11 @@ public class ConfigManager {
     private final Transactions plugin;
     private Map<String, String> translations;
     private DecimalFormat amountFormatter;
+    public List<String> ignoredPlugins = new ArrayList<>();
 
     public String prefix;
     public boolean showStatsButton;
+    public boolean useDialogs;
     public boolean allowBalanceToggle;
     public String incomeMessageColor;
     public String incomeAmountColor;
@@ -56,12 +56,14 @@ public class ConfigManager {
         incomeAmountColor = plugin.getConfig().getString("income-amount-color", "§a");
         expenseMessageColor = plugin.getConfig().getString("expense-message-color", "§f");
         expenseAmountColor = plugin.getConfig().getString("expense-amount-color", "§c");
+        useDialogs = plugin.getConfig().getBoolean("use-dialogs", false);
         yellowMessageColor = plugin.getConfig().getString("yellow-message-color", "§f");
         yellowAmountColor = plugin.getConfig().getString("yellow-amount-color", "§e");
         cleanTransactionsPeriodMs = parseTimePeriod(plugin.getConfig().getString("clean-transactions-period", "14d"));
         defaultGmtOffset = plugin.getConfig().getInt("default-gmt-offset", 0);
         logExternalTransactions = plugin.getConfig().getBoolean("log-external-transactions", true);
         maxDisplayTransactionRange = plugin.getConfig().getInt("max-display-transaction-range", 90);
+        ignoredPlugins = plugin.getConfig().getStringList("ignored-plugins");
 
         String language = plugin.getConfig().getString("language", "en");
         File langFile = new File(plugin.getDataFolder() + "/lang", language + ".yml");

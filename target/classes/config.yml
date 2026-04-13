@@ -32,3 +32,14 @@ clean-transactions-period: "14d"
 log-external-transactions: true
 allow-balance-toggle: true
 default-gmt-offset: 0
+transaction-villagermarket-buy:
+  enabled: true
+  transaction-villagermarket-sell:
+    enabled: true
+###############################
+ignored-plugins:              #
+  - ghostchu          🚫      # Pls, dont change this
+  - bestemor                  #
+###############################
+# Использовать Dialog API вместо инвентаря (только для клиентов 1.21.6+)
+use-dialogs: false

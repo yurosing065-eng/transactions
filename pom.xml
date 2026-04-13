@@ -112,5 +112,12 @@
           <scope>provided</scope>
           <classifier>shaded</classifier>
       </dependency>
+      <dependency>
+          <groupId>com.github.Bestem0r</groupId>
+          <artifactId>VillagerMarket</artifactId>
+          <version>1.13.2</version>
+          <scope>provided</scope>
+
+      </dependency>
   </dependencies>
 </project>

@@ -3,6 +3,7 @@ package com.tyurvib.transactions;
 import com.tyurvib.transactions.command.TransactionsCommand;
 import com.tyurvib.transactions.listener.QuickShopListener;
 import com.tyurvib.transactions.listener.TransactionListener;
+import com.tyurvib.transactions.listener.VillagerMarketListener;
 import com.tyurvib.transactions.manager.ConfigManager;
 import com.tyurvib.transactions.manager.DatabaseManager;
 import com.tyurvib.transactions.manager.GuiManager;
@@ -40,6 +41,10 @@ public class Transactions extends JavaPlugin {
         if (getServer().getPluginManager().getPlugin("QuickShop-Hikari") != null) {
             getServer().getPluginManager().registerEvents(new QuickShopListener(this), this);
             getLogger().info("QuickShop-Hikari найден, логирование покупок включено.");
+        }
+        if (getServer().getPluginManager().getPlugin("VillagerMarket") != null) {
+            getServer().getPluginManager().registerEvents(new VillagerMarketListener(this), this);
+            getLogger().info("VillagerMarket интеграция включена.");
         }
     }
 

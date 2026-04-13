@@ -9,6 +9,7 @@ com\tyurvib\transactions\model\FilterType.class
 com\tyurvib\transactions\Updater.class
 com\tyurvib\transactions\Transactions.class
 com\tyurvib\transactions\manager\ConfigManager$1.class
+com\tyurvib\transactions\listener\VillagerMarketListener.class
 com\tyurvib\transactions\manager\DatabaseManager.class
 com\tyurvib\transactions\listener\TransactionListener.class
 com\tyurvib\transactions\manager\GuiManager.class

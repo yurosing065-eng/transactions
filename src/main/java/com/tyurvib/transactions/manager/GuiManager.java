@@ -261,4 +261,171 @@ public class GuiManager {
             default: return "";
         }
     }
+    public void openTransactions(Player player, int page, UUID targetUUID, String targetName) {
+        plugin.getLogger().info("useDialogs=" + plugin.getConfigManager().useDialogs
+                + " isDialogSupported=" + isDialogSupported(player));
+
+        if (plugin.getConfigManager().useDialogs && isDialogSupported(player)) {
+            openDialog(player, page, targetUUID, targetName);
+        } else {
+            openGUI(player, page, targetUUID, targetName);
+        }
+    }
+
+    private boolean isDialogSupported(Player player) {
+        try {
+            Class.forName("io.papermc.paper.dialog.Dialog");
+            plugin.getLogger().info("Dialog class found!");
+            return true;
+        } catch (ClassNotFoundException e) {
+            plugin.getLogger().warning("Dialog class NOT found: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public void openDialog(Player player, int page, UUID targetUUID, String targetName) {
+        TransactionManager tm = plugin.getTransactionManager();
+        ConfigManager cm = plugin.getConfigManager();
+
+        tm.getTransactionsAsync(targetUUID).thenAccept(list -> {
+            FilterData filter = tm.playerFilters.computeIfAbsent(player.getUniqueId(), k -> new FilterData());
+            List<Transaction> filteredList = new ArrayList<>();
+            long now = System.currentTimeMillis();
+            long cutoffTimestamp = (filter.timePeriod == TimePeriod.LAST_7_DAYS) ? now - TimeUnit.DAYS.toMillis(7) :
+                    (filter.timePeriod == TimePeriod.LAST_30_DAYS) ? now - TimeUnit.DAYS.toMillis(30) : 0;
+
+            for (Transaction t : list) {
+                if (filter.timePeriod == TimePeriod.ALL_TIME || t.timestamp >= cutoffTimestamp) {
+                    if (filter.filterType == FilterType.ALL ||
+                            (filter.filterType == FilterType.INCOME && t.type == Type.INCOME) ||
+                            (filter.filterType == FilterType.EXPENSE && t.type == Type.EXPENSE) ||
+                            (filter.filterType == FilterType.PAY && t.key.contains("pay")) ||
+                            (filter.filterType == FilterType.OTHER && !t.key.contains("pay"))) {
+                        filteredList.add(t);
+                    }
+                }
+            }
+            filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
+
+            double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
+            List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
+
+            plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+                if (!player.isOnline()) return;
+
+                int start = page * 10; // 10 транзакций на страницу в диалоге
+                int end = Math.min(filteredList.size(), start + 10);
+
+                int gmtOffset = tm.playerGmtOffset.getOrDefault(player.getUniqueId(), cm.defaultGmtOffset);
+                SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+                sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (gmtOffset >= 0 ? "+" : "") + gmtOffset));
+
+                // Строим тело диалога
+                List<io.papermc.paper.registry.data.dialog.body.DialogBody> bodies = new ArrayList<>();
+
+                // Заголовок с именем игрока и страницей
+                bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
+                        net.kyori.adventure.text.Component.text(
+                                "§8" + targetName + " | " + cm.getTranslation("page") + " " + (page + 1)
+                        )
+                ));
+
+                if (filteredList.isEmpty()) {
+                    bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
+                            net.kyori.adventure.text.Component.text("§7" + cm.getTranslation("no-transactions"))
+                    ));
+                } else {
+                    for (int i = start; i < end; i++) {
+                        Transaction t = filteredList.get(i);
+                        String desc = ChatColor.stripColor(cm.getTranslatedDescription(t));
+                        String time = sdf.format(new Date(t.timestamp));
+
+                        StringBuilder line = new StringBuilder(desc);
+
+                        // Баланс до/после
+                        if (tm.showBalance.getOrDefault(player.getUniqueId(), true) && t.type != Type.YELLOW) {
+                            double after = balanceLog.get(i);
+                            double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
+                            line.append("\n§8")
+                                    .append(cm.getAmountFormatter().format(Math.abs(before)))
+                                    .append(" → ")
+                                    .append(cm.getAmountFormatter().format(Math.abs(after)));
+                        }
+
+                        line.append(" §8| ").append(time);
+
+                        // Источник для OP
+                        if (player.hasPermission("transactions.source") && t.source != null && !t.source.isEmpty()) {
+                            line.append("\n§8").append(cm.getTranslation("source-plugin")).append(t.source);
+                        }
+
+                        bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
+                                net.kyori.adventure.text.Component.text(line.toString())
+                        ));
+                    }
+                }
+
+                // Кнопки навигации
+                List<io.papermc.paper.registry.data.dialog.ActionButton> buttons = new ArrayList<>();
+
+                // Кнопка Назад
+                if (page > 0) {
+                    final int prevPage = page - 1;
+                    buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                                    net.kyori.adventure.text.Component.text("§e" + cm.getTranslation("prev-button")))
+                            .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                    (view, audience) -> {
+                                        if (audience instanceof Player p) {
+                                            openDialog(p, prevPage, targetUUID, targetName);
+                                        }
+                                    },
+                                    net.kyori.adventure.text.event.ClickCallback.Options.builder().uses(1).build()
+                            ))
+                            .build()
+                    );
+                }
+
+                // Кнопка Вперёд
+                if (end < filteredList.size()) {
+                    final int nextPage = page + 1;
+                    buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                                    net.kyori.adventure.text.Component.text("§e" + cm.getTranslation("next-button")))
+                            .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                    (view, audience) -> {
+                                        if (audience instanceof Player p) {
+                                            openDialog(p, nextPage, targetUUID, targetName);
+                                        }
+                                    },
+                                    net.kyori.adventure.text.event.ClickCallback.Options.builder().uses(1).build()
+                            ))
+                            .build()
+                    );
+                }
+
+                // Кнопка Закрыть
+                buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                                net.kyori.adventure.text.Component.text("§c" + cm.getTranslation("close-button")))
+                        .action(null)
+                        .build()
+                );
+
+                // Собираем диалог
+                io.papermc.paper.dialog.Dialog dialog = io.papermc.paper.dialog.Dialog.create(builder -> builder.empty()
+                        .base(io.papermc.paper.registry.data.dialog.DialogBase.builder(
+                                        net.kyori.adventure.text.Component.text("§6" + cm.getTranslation("gui-title") + targetName))
+                                .body(bodies)
+                                .build()
+                        )
+                        .type(io.papermc.paper.registry.data.dialog.type.DialogType.multiAction(buttons).build())
+                );
+
+                player.showDialog(dialog);
+
+                // Сохраняем состояние
+                tm.currentPage.put(player.getUniqueId(), page);
+                tm.searchTargetPlayer.put(player.getUniqueId(), targetName);
+                tm.rollbackTargetUUID.put(player.getUniqueId(), targetUUID);
+            });
+        });
+    }
 }
