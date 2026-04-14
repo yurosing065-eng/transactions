@@ -1,5 +1,6 @@
 package com.tyurvib.transactions;
 
+import com.tcoded.folialib.FoliaLib;
 import com.tyurvib.transactions.command.TransactionsCommand;
 import com.tyurvib.transactions.listener.QuickShopListener;
 import com.tyurvib.transactions.listener.TransactionListener;
@@ -17,12 +18,14 @@ public class Transactions extends JavaPlugin {
     private ConfigManager configManager;
     private DatabaseManager databaseManager;
     private TransactionManager transactionManager;
+    private FoliaLib foliaLib;
     private GuiManager guiManager;
     private Economy economy;
     private Updater updater;
 
     @Override
     public void onEnable() {
+        this.foliaLib = new FoliaLib(this);
         if (!setupEconomy()) {
             getLogger().severe("Vault or Economy plugin not found!");
             getServer().getPluginManager().disablePlugin(this);
@@ -47,7 +50,7 @@ public class Transactions extends JavaPlugin {
             getLogger().info("VillagerMarket интеграция включена.");
         }
     }
-
+    public FoliaLib getFoliaLib() { return foliaLib; }
     @Override
     public void onDisable() {
         if (transactionManager != null) transactionManager.saveDirtyPlayers();

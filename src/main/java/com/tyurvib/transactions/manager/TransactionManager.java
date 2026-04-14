@@ -1,5 +1,6 @@
 package com.tyurvib.transactions.manager;
 
+import com.tcoded.folialib.FoliaLib;
 import com.tyurvib.transactions.Transactions;
 import com.tyurvib.transactions.model.FilterData;
 import com.tyurvib.transactions.model.Transaction;
@@ -39,10 +40,12 @@ public class TransactionManager {
     public final Map<UUID, String> rollbackTargetName = new HashMap<>();
     public final Set<UUID> payInProgress = ConcurrentHashMap.newKeySet();
     public final Set<UUID> shopInProgress = ConcurrentHashMap.newKeySet();
+    private final FoliaLib foliaLib;
     public final Set<UUID> ecoInProgress = ConcurrentHashMap.newKeySet();
 
     public TransactionManager(Transactions plugin) {
         this.plugin = plugin;
+        this.foliaLib = new FoliaLib(plugin);
         startSaveTask();
     }
 
@@ -89,10 +92,10 @@ public class TransactionManager {
             transactionCache.put(uuid, list);
             return list;
 
-        }, runnable -> plugin.getServer().getAsyncScheduler().runNow(plugin, task -> runnable.run()));
+        }, runnable -> foliaLib.getScheduler().runAsync(task -> runnable.run()));
     }
     private void startSaveTask() {
-        plugin.getServer().getAsyncScheduler().runAtFixedRate(plugin, (task) -> {
+        foliaLib.getScheduler().runTimerAsync((task) -> {
             saveDirtyPlayers();
         }, 15, 15, TimeUnit.SECONDS);
     }

@@ -1,12 +1,12 @@
 package com.tyurvib.transactions.manager;
 
+import com.tcoded.folialib.FoliaLib;
 import com.tyurvib.transactions.Transactions;
 import com.tyurvib.transactions.model.FilterData;
 import com.tyurvib.transactions.model.FilterType;
 import com.tyurvib.transactions.model.TimePeriod;
 import com.tyurvib.transactions.model.Transaction;
 import com.tyurvib.transactions.model.Type;
-import org.bukkit.Bukkit;
 
 import java.io.File;
 import java.sql.*;
@@ -17,12 +17,15 @@ import java.util.concurrent.TimeUnit;
 public class DatabaseManager {
 
     private final Transactions plugin;
+    private final FoliaLib foliaLib;
     public Connection db;
     private final ConcurrentLinkedQueue<Runnable> dbWriteQueue = new ConcurrentLinkedQueue<>();
     private long lastCleanTime = 0;
 
     public DatabaseManager(Transactions plugin) {
         this.plugin = plugin;
+        // Инициализируем FoliaLib
+        this.foliaLib = new FoliaLib(plugin);
         initDatabase();
         startTasks();
     }
@@ -30,9 +33,11 @@ public class DatabaseManager {
     private void initDatabase() {
         try {
             File dbFile = new File(plugin.getDataFolder(), "transactions.db");
+            if (!plugin.getDataFolder().exists()) plugin.getDataFolder().mkdirs();
+
             db = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getPath());
             createTables();
-            updateTableStructure(); // ФИКС: Добавляем колонки в старую базу
+            updateTableStructure();
             plugin.getLogger().info("SQLite база данных подключена.");
         } catch (SQLException e) {
             plugin.getLogger().severe("Не удалось подключиться к SQLite: " + e.getMessage());
@@ -53,7 +58,8 @@ public class DatabaseManager {
                 balance_after REAL DEFAULT 0.0,
                 timestamp INTEGER NOT NULL,
                 rolled_back BOOLEAN NOT NULL DEFAULT 0,
-                param1 TEXT, param2 TEXT, param3 TEXT
+                param1 TEXT, param2 TEXT, param3 TEXT,
+                source TEXT
             );
             """);
             stmt.execute("""
@@ -67,45 +73,42 @@ public class DatabaseManager {
             """);
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_player ON transactions (player_uuid);");
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON transactions (timestamp DESC);");
-            stmt.execute("""
-    CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        player_uuid TEXT NOT NULL,
-        type TEXT NOT NULL,
-        key TEXT NOT NULL,
-        amount REAL NOT NULL,
-        balance_before REAL DEFAULT 0.0,
-        balance_after REAL DEFAULT 0.0,
-        timestamp INTEGER NOT NULL,
-        rolled_back BOOLEAN NOT NULL DEFAULT 0,
-        param1 TEXT, param2 TEXT, param3 TEXT,
-        source TEXT
-    );
-""");
         }
     }
 
     private void updateTableStructure() {
         try (Statement stmt = db.createStatement()) {
-            try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_before REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
-            try { stmt.execute("ALTER TABLE transactions ADD COLUMN balance_after REAL DEFAULT 0.0;"); } catch (SQLException ignored) {}
-            try { stmt.execute("ALTER TABLE transactions ADD COLUMN source TEXT;"); } catch (SQLException ignored) {}
+            String[] columns = {
+                    "ALTER TABLE transactions ADD COLUMN balance_before REAL DEFAULT 0.0;",
+                    "ALTER TABLE transactions ADD COLUMN balance_after REAL DEFAULT 0.0;",
+                    "ALTER TABLE transactions ADD COLUMN source TEXT;"
+            };
+            for (String sql : columns) {
+                try { stmt.execute(sql); } catch (SQLException ignored) {}
+            }
         } catch (SQLException e) {
             plugin.getLogger().warning("Ошибка при обновлении колонок базы: " + e.getMessage());
         }
     }
 
     private void startTasks() {
-        plugin.getServer().getAsyncScheduler().runAtFixedRate(plugin, (task) -> {
+        // Очередь записи (Асинхронно)
+        foliaLib.getScheduler().runTimerAsync((task) -> {
             Runnable dbTask;
             while ((dbTask = dbWriteQueue.poll()) != null) {
-                try { dbTask.run(); } catch (Exception e) { e.printStackTrace(); }
+                try {
+                    dbTask.run();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
         }, 5, 5, TimeUnit.SECONDS);
 
         lastCleanTime = System.currentTimeMillis();
         long cleanIntervalSec = Math.max(plugin.getConfigManager().cleanTransactionsPeriodMs / 1000, 20);
-        plugin.getServer().getAsyncScheduler().runAtFixedRate(plugin, (task) -> {
+
+        // Очистка старых транзакций (Асинхронно)
+        foliaLib.getScheduler().runTimerAsync((task) -> {
             if (System.currentTimeMillis() - lastCleanTime >= plugin.getConfigManager().cleanTransactionsPeriodMs) {
                 clearAllTransactionsAsync();
             }
@@ -128,8 +131,7 @@ public class DatabaseManager {
                     if (i < t.params.length && t.params[i] != null) pstmt.setString(9 + i, t.params[i]);
                     else pstmt.setNull(9 + i, Types.VARCHAR);
                 }
-                if (t.source != null) pstmt.setString(12, t.source);
-                else pstmt.setNull(12, Types.VARCHAR);
+                pstmt.setString(12, t.source != null ? t.source : null);
                 pstmt.executeUpdate();
             } catch (SQLException e) {
                 plugin.getLogger().warning("Error saving transaction: " + e.getMessage());
@@ -154,31 +156,33 @@ public class DatabaseManager {
 
     public void savePlayerSettings(Set<UUID> dirtyPlayers, Map<UUID, Integer> offsets, Map<UUID, FilterData> filters, Map<UUID, Boolean> showBalance) {
         if (dirtyPlayers.isEmpty()) return;
-        String sql = """
-        INSERT INTO player_settings (player_uuid, gmt_offset, filter_type, time_period, show_balance)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(player_uuid) DO UPDATE SET
-            gmt_offset = excluded.gmt_offset,
-            filter_type = excluded.filter_type,
-            time_period = excluded.time_period,
-            show_balance = excluded.show_balance
-        """;
-        try (PreparedStatement pstmt = db.prepareStatement(sql)) {
-            for (UUID uuid : dirtyPlayers) {
-                pstmt.setString(1, uuid.toString());
-                pstmt.setInt(2, offsets.getOrDefault(uuid, plugin.getConfigManager().defaultGmtOffset));
-                FilterData f = filters.getOrDefault(uuid, new FilterData());
-                pstmt.setString(3, f.filterType.name());
-                pstmt.setString(4, f.timePeriod.name());
-                pstmt.setBoolean(5, showBalance.getOrDefault(uuid, true));
-                pstmt.addBatch();
+        // Запускаем асинхронно через FoliaLib, чтобы не блокировать поток вызова
+        foliaLib.getScheduler().runAsync((task) -> {
+            String sql = """
+            INSERT INTO player_settings (player_uuid, gmt_offset, filter_type, time_period, show_balance)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(player_uuid) DO UPDATE SET
+                gmt_offset = excluded.gmt_offset,
+                filter_type = excluded.filter_type,
+                time_period = excluded.time_period,
+                show_balance = excluded.show_balance
+            """;
+            try (PreparedStatement pstmt = db.prepareStatement(sql)) {
+                for (UUID uuid : dirtyPlayers) {
+                    pstmt.setString(1, uuid.toString());
+                    pstmt.setInt(2, offsets.getOrDefault(uuid, plugin.getConfigManager().defaultGmtOffset));
+                    FilterData f = filters.getOrDefault(uuid, new FilterData());
+                    pstmt.setString(3, f.filterType.name());
+                    pstmt.setString(4, f.timePeriod.name());
+                    pstmt.setBoolean(5, showBalance.getOrDefault(uuid, true));
+                    pstmt.addBatch();
+                }
+                pstmt.executeBatch();
+            } catch (SQLException e) {
+                plugin.getLogger().warning("Error saving settings: " + e.getMessage());
             }
-            pstmt.executeBatch();
-        } catch (SQLException e) {
-            plugin.getLogger().warning("Error saving settings: " + e.getMessage());
-        }
+        });
     }
-
 
     public Map<UUID, List<Transaction>> loadAllTransactions() {
         Map<UUID, List<Transaction>> map = new HashMap<>();
@@ -186,28 +190,23 @@ public class DatabaseManager {
              ResultSet rs = stmt.executeQuery("SELECT * FROM transactions ORDER BY timestamp DESC")) {
             while (rs.next()) {
                 UUID uuid = UUID.fromString(rs.getString("player_uuid"));
-
-                // 1. Сначала собираем параметры в массив
                 List<String> paramsList = new ArrayList<>();
                 for (int i = 1; i <= 3; i++) {
                     String p = rs.getString("param" + i);
-                    if (p != null && !p.isEmpty()) paramsList.add(p);
+                    if (p != null) paramsList.add(p);
                 }
-                String[] paramsArray = paramsList.toArray(new String[0]);
 
-                // 2. Вызываем конструктор в ПРАВИЛЬНОМ порядке:
-                // Type, String, double (amount), double (before), double (after), String[], long (timestamp)
                 Transaction t = new Transaction(
                         Type.valueOf(rs.getString("type")),
                         rs.getString("key"),
                         rs.getDouble("amount"),
-                        rs.getDouble("balance_before"), // ВАЖНО: сначала числа
-                        rs.getDouble("balance_after"),  // ВАЖНО: сначала числа
-                        paramsArray,                    // Затем массив строк
-                        rs.getLong("timestamp")         // В конце время
+                        rs.getDouble("balance_before"),
+                        rs.getDouble("balance_after"),
+                        paramsList.toArray(new String[0]),
+                        rs.getLong("timestamp")
                 );
-
                 t.rolledBack = rs.getBoolean("rolled_back");
+                t.source = rs.getString("source");
                 map.computeIfAbsent(uuid, k -> new ArrayList<>()).add(t);
             }
         } catch (SQLException e) {
@@ -226,7 +225,9 @@ public class DatabaseManager {
                     f.filterType = FilterType.valueOf(rs.getString("filter_type"));
                     f.timePeriod = TimePeriod.valueOf(rs.getString("time_period"));
                     filters.put(uuid, f);
-                } catch (Exception ignored) { filters.put(uuid, new FilterData()); }
+                } catch (Exception ignored) {
+                    filters.put(uuid, new FilterData());
+                }
                 showBalance.put(uuid, rs.getBoolean("show_balance"));
             }
         } catch (SQLException e) {
@@ -235,19 +236,25 @@ public class DatabaseManager {
     }
 
     public void clearAllTransactionsAsync() {
-        try (Statement stmt = db.createStatement()) {
-            stmt.executeUpdate("DELETE FROM transactions");
-            Bukkit.getScheduler().runTask(plugin, () -> {
-                plugin.getTransactionManager().clearCache();
-                plugin.getLogger().info("Транзакции очищены.");
-                lastCleanTime = System.currentTimeMillis();
-            });
-        } catch (SQLException e) {
-            plugin.getLogger().warning("Ошибка очистки: " + e.getMessage());
-        }
+        foliaLib.getScheduler().runAsync((task) -> {
+            try (Statement stmt = db.createStatement()) {
+                stmt.executeUpdate("DELETE FROM transactions");
+
+                // Возвращаемся в основной поток (или ближайший тикающий регион),
+                // если clearCache требует синхронизации
+                foliaLib.getScheduler().runNextTick((t) -> {
+                    plugin.getTransactionManager().clearCache();
+                    plugin.getLogger().info("Транзакции очищены.");
+                    lastCleanTime = System.currentTimeMillis();
+                });
+            } catch (SQLException e) {
+                plugin.getLogger().warning("Ошибка очистки: " + e.getMessage());
+            }
+        });
     }
 
     public void close() {
+        // Отрабатываем оставшиеся задачи перед закрытием
         Runnable task;
         while ((task = dbWriteQueue.poll()) != null) {
             try { task.run(); } catch (Exception ignored) {}

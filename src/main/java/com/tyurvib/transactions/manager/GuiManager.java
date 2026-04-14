@@ -2,6 +2,7 @@ package com.tyurvib.transactions.manager;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.tcoded.folialib.FoliaLib;
 import com.tyurvib.transactions.Transactions;
 import com.tyurvib.transactions.model.*;
 import org.bukkit.Bukkit;
@@ -29,9 +30,10 @@ public class GuiManager {
     public static final String SELECTED_HEAD = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOTIxOTI4ZWE2N2QzYThiOTdkMjEyNzU4ZjE1Y2NjYWMxMDI0Mjk1YjE4NWIzMTkyNjQ4NDRmNGM1ZTFlNjFlIn19fQ==";
     public static final String UNSELECTED_HEAD = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvMjVlZjY4ZGNiZDU4MjM0YmE3YWVlMmFkOTFjYTZmYTdjZTIzZjlhMzIzNDViNDhkNmU1ZjViODZhNjhiNWIifX19";
     public static final String SEARCH_HEAD = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZjc0OGYyMTM1ODhkYmY0NDE1Y2UyNGZlNjZkZTM1MjY4MTZiZjM1ZGY4ZTM5OGY5OGVmZWMyZmIwODk1NmEzIn19fQ==";
-
+    private final FoliaLib foliaLib;
     public GuiManager(Transactions plugin) {
         this.plugin = plugin;
+        this.foliaLib = new FoliaLib(plugin);
     }
 
     public void openGUI(Player player, int page, UUID targetUUID, String targetName) {
@@ -60,7 +62,7 @@ public class GuiManager {
 
             double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
             List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
-            plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+            foliaLib.getScheduler().runAtEntity(player, task -> {
                 if (!player.isOnline()) return;
 
                 Inventory inv = Bukkit.createInventory(null, 54, cm.getTranslation("gui-title") + targetName + " (#" + (page + 1) + ")");
@@ -274,21 +276,41 @@ public class GuiManager {
 
     private boolean isDialogSupported(Player player) {
         try {
+            // Проверяем что класс Dialog вообще есть на сервере
             Class.forName("io.papermc.paper.dialog.Dialog");
-            plugin.getLogger().info("Dialog class found!");
-            return true;
         } catch (ClassNotFoundException e) {
-            plugin.getLogger().warning("Dialog class NOT found: " + e.getMessage());
             return false;
+        }
+
+        try {
+            // Проверяем версию протокола клиента через ViaVersion
+            // 1.21.6 = протокол 766, 1.21.7 = протокол 771
+            int protocol = com.viaversion.viaversion.api.Via.getAPI()
+                    .getPlayerVersion(player.getUniqueId());
+            return protocol >= 771;
+        } catch (Exception e) {
+            // ViaVersion недоступен — значит клиент той же версии что сервер (1.21.8)
+            // значит диалоги поддерживаются
+            return true;
         }
     }
 
+    private static net.kyori.adventure.text.Component legacy(String s) {
+        return net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(s);
+    }
+
     public void openDialog(Player player, int page, UUID targetUUID, String targetName) {
+        openDialog(player, page, targetUUID, targetName, null, null);
+    }
+
+    public void openDialog(Player player, int page, UUID targetUUID, String targetName, FilterType filterOverride, String nickFilter) {
         TransactionManager tm = plugin.getTransactionManager();
         ConfigManager cm = plugin.getConfigManager();
 
         tm.getTransactionsAsync(targetUUID).thenAccept(list -> {
             FilterData filter = tm.playerFilters.computeIfAbsent(player.getUniqueId(), k -> new FilterData());
+            if (filterOverride != null) filter.filterType = filterOverride;
+
             List<Transaction> filteredList = new ArrayList<>();
             long now = System.currentTimeMillis();
             long cutoffTimestamp = (filter.timePeriod == TimePeriod.LAST_7_DAYS) ? now - TimeUnit.DAYS.toMillis(7) :
@@ -296,123 +318,205 @@ public class GuiManager {
 
             for (Transaction t : list) {
                 if (filter.timePeriod == TimePeriod.ALL_TIME || t.timestamp >= cutoffTimestamp) {
-                    if (filter.filterType == FilterType.ALL ||
+                    boolean typeMatch = filter.filterType == FilterType.ALL ||
                             (filter.filterType == FilterType.INCOME && t.type == Type.INCOME) ||
                             (filter.filterType == FilterType.EXPENSE && t.type == Type.EXPENSE) ||
                             (filter.filterType == FilterType.PAY && t.key.contains("pay")) ||
-                            (filter.filterType == FilterType.OTHER && !t.key.contains("pay"))) {
-                        filteredList.add(t);
+                            (filter.filterType == FilterType.OTHER && !t.key.contains("pay"));
+                    if (!typeMatch) continue;
+
+                    if (nickFilter != null && !nickFilter.isEmpty()) {
+                        boolean nickMatch = java.util.Arrays.stream(t.params)
+                                .anyMatch(p -> p.equalsIgnoreCase(nickFilter));
+                        if (!nickMatch) continue;
                     }
+                    filteredList.add(t);
                 }
             }
             filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
 
             double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
-            List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
+            List<Double> balanceLog = calculateBalanceLog(list, currentBalance);
 
-            plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+            Map<Long, Integer> timestampToIndex = new HashMap<>();
+            for (int i = 0; i < list.size(); i++) {
+                timestampToIndex.put(list.get(i).timestamp, i);
+            }
+
+            foliaLib.getScheduler().runAtEntity(player,task -> {
                 if (!player.isOnline()) return;
 
-                int start = page * 10; // 10 транзакций на страницу в диалоге
-                int end = Math.min(filteredList.size(), start + 10);
+                final int perPage = 8;
+                int start = page * perPage;
+                int end = Math.min(filteredList.size(), start + perPage);
+                int totalPages = filteredList.isEmpty() ? 1 : (int) Math.ceil(filteredList.size() / (double) perPage);
 
                 int gmtOffset = tm.playerGmtOffset.getOrDefault(player.getUniqueId(), cm.defaultGmtOffset);
                 SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
                 sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (gmtOffset >= 0 ? "+" : "") + gmtOffset));
 
-                // Строим тело диалога
+                double weekIncome = 0, weekExpense = 0;
+                long weekCutoff = now - TimeUnit.DAYS.toMillis(7);
+                for (Transaction t : filteredList) {
+                    if (t.timestamp >= weekCutoff) {
+                        if (t.type == Type.INCOME) weekIncome += t.amount;
+                        else if (t.type == Type.EXPENSE) weekExpense += t.amount;
+                    }
+                }
+
                 List<io.papermc.paper.registry.data.dialog.body.DialogBody> bodies = new ArrayList<>();
 
-                // Заголовок с именем игрока и страницей
+                String filterName = cm.getTranslation("filter-type-" + filter.filterType.name().toLowerCase());
+                String nickInfo = (nickFilter != null && !nickFilter.isEmpty()) ? "  §d@" + nickFilter : "";
+                bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(legacy(
+                        "§7" + cm.getTranslation("filter-button") + ": §e" + filterName +
+                                nickInfo +
+                                "  §8|  §7" + cm.getTranslation("page") + " §f" + (page + 1) + "§7/§f" + totalPages
+                )));
+
+                if (cm.showStatsButton) {
+                    bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(legacy(
+                            "§a▲ " + cm.getTranslation("stats-income") +
+                                    cm.getAmountFormatter().format(weekIncome) + " " + cm.prefix +
+                                    "  §c▼ " + cm.getTranslation("stats-expense") +
+                                    cm.getAmountFormatter().format(weekExpense) + " " + cm.prefix
+                    )));
+                }
+
                 bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
-                        net.kyori.adventure.text.Component.text(
-                                "§8" + targetName + " | " + cm.getTranslation("page") + " " + (page + 1)
-                        )
+                        legacy("§8§m                                        ")
                 ));
 
                 if (filteredList.isEmpty()) {
                     bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
-                            net.kyori.adventure.text.Component.text("§7" + cm.getTranslation("no-transactions"))
+                            legacy("§7  " + cm.getTranslation("no-transactions"))
                     ));
                 } else {
                     for (int i = start; i < end; i++) {
                         Transaction t = filteredList.get(i);
-                        String desc = ChatColor.stripColor(cm.getTranslatedDescription(t));
                         String time = sdf.format(new Date(t.timestamp));
 
-                        StringBuilder line = new StringBuilder(desc);
-
-                        // Баланс до/после
-                        if (tm.showBalance.getOrDefault(player.getUniqueId(), true) && t.type != Type.YELLOW) {
-                            double after = balanceLog.get(i);
-                            double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
-                            line.append("\n§8")
-                                    .append(cm.getAmountFormatter().format(Math.abs(before)))
-                                    .append(" → ")
-                                    .append(cm.getAmountFormatter().format(Math.abs(after)));
+                        String icon, amountColor, msgColor;
+                        switch (t.type) {
+                            case INCOME  -> { icon = "§a▲"; amountColor = "§a"; msgColor = cm.incomeMessageColor; }
+                            case EXPENSE -> { icon = "§c▼"; amountColor = "§c"; msgColor = cm.expenseMessageColor; }
+                            default      -> { icon = "§e●"; amountColor = "§e"; msgColor = cm.yellowMessageColor; }
                         }
 
-                        line.append(" §8| ").append(time);
+                        String rawDesc = ChatColor.stripColor(cm.getTranslatedDescription(t));
+                        String cleanDesc = rawDesc.replaceAll("\\(.*?\\)", "").trim();
+                        String sign = t.type == Type.INCOME ? "+" : t.type == Type.EXPENSE ? "-" : "";
 
-                        // Источник для OP
+                        StringBuilder line = new StringBuilder();
+                        line.append(icon).append(" ")
+                                .append(msgColor).append(cleanDesc)
+                                .append("  ").append(amountColor)
+                                .append(sign).append(cm.getAmountFormatter().format(t.amount))
+                                .append(" ").append(cm.prefix);
+
+                        if (tm.showBalance.getOrDefault(player.getUniqueId(), true) && t.type != Type.YELLOW) {
+                            Integer idx = timestampToIndex.get(t.timestamp);
+                            if (idx != null && idx < balanceLog.size()) {
+                                double after = balanceLog.get(idx);
+                                double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
+                                line.append("\n   §8")
+                                        .append(cm.getAmountFormatter().format(Math.abs(before)))
+                                        .append(" → ")
+                                        .append(cm.getAmountFormatter().format(Math.abs(after)))
+                                        .append("  §7").append(time);
+                            } else {
+                                line.append("  §7").append(time);
+                            }
+                        } else {
+                            line.append("  §7").append(time);
+                        }
+
                         if (player.hasPermission("transactions.source") && t.source != null && !t.source.isEmpty()) {
-                            line.append("\n§8").append(cm.getTranslation("source-plugin")).append(t.source);
+                            line.append("\n   §8").append(cm.getTranslation("source-plugin")).append(t.source);
                         }
 
                         bodies.add(io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
-                                net.kyori.adventure.text.Component.text(line.toString())
+                                legacy(line.toString())
                         ));
                     }
                 }
 
-                // Кнопки навигации
+                var opts = net.kyori.adventure.text.event.ClickCallback.Options.builder()
+                        .uses(Integer.MAX_VALUE)
+                        .lifetime(java.time.Duration.ofMinutes(10))
+                        .build();
+
                 List<io.papermc.paper.registry.data.dialog.ActionButton> buttons = new ArrayList<>();
 
-                // Кнопка Назад
                 if (page > 0) {
                     final int prevPage = page - 1;
                     buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
-                                    net.kyori.adventure.text.Component.text("§e" + cm.getTranslation("prev-button")))
+                                    legacy("§e◀ " + cm.getTranslation("prev-button")))
                             .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
-                                    (view, audience) -> {
-                                        if (audience instanceof Player p) {
-                                            openDialog(p, prevPage, targetUUID, targetName);
-                                        }
-                                    },
-                                    net.kyori.adventure.text.event.ClickCallback.Options.builder().uses(1).build()
-                            ))
-                            .build()
+                                    (view, audience) -> { if (audience instanceof Player p) openDialog(p, prevPage, targetUUID, targetName, null, nickFilter); },
+                                    opts
+                            )).build()
                     );
                 }
 
-                // Кнопка Вперёд
                 if (end < filteredList.size()) {
                     final int nextPage = page + 1;
                     buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
-                                    net.kyori.adventure.text.Component.text("§e" + cm.getTranslation("next-button")))
+                                    legacy("§e" + cm.getTranslation("next-button") + " ▶"))
                             .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
-                                    (view, audience) -> {
-                                        if (audience instanceof Player p) {
-                                            openDialog(p, nextPage, targetUUID, targetName);
-                                        }
-                                    },
-                                    net.kyori.adventure.text.event.ClickCallback.Options.builder().uses(1).build()
-                            ))
-                            .build()
+                                    (view, audience) -> { if (audience instanceof Player p) openDialog(p, nextPage, targetUUID, targetName, null, nickFilter); },
+                                    opts
+                            )).build()
                     );
                 }
 
-                // Кнопка Закрыть
+                // Фильтр цикличный
+                FilterType nextFilter = switch (filter.filterType) {
+                    case ALL -> FilterType.INCOME;
+                    case INCOME -> FilterType.EXPENSE;
+                    case EXPENSE -> FilterType.PAY;
+                    case PAY -> FilterType.OTHER;
+                    case OTHER -> FilterType.ALL;
+                };
                 buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
-                                net.kyori.adventure.text.Component.text("§c" + cm.getTranslation("close-button")))
+                                legacy("§b⚙ " + cm.getTranslation("filter-type-" + nextFilter.name().toLowerCase())))
+                        .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                (view, audience) -> { if (audience instanceof Player p) openDialog(p, 0, targetUUID, targetName, nextFilter, nickFilter); },
+                                opts
+                        )).build()
+                );
+
+                // Поиск по нику
+                if (player.getUniqueId().equals(targetUUID) || player.hasPermission("transactions.view.others")) {
+                    String searchLabel = (nickFilter != null && !nickFilter.isEmpty())
+                            ? "§d✕ " + nickFilter
+                            : "§9⌕ " + cm.getTranslation("search-button");
+                    buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(legacy(searchLabel))
+                            .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                    (view, audience) -> {
+                                        if (audience instanceof Player p) {
+                                            if (nickFilter != null && !nickFilter.isEmpty()) {
+                                                openDialog(p, 0, targetUUID, targetName, null, null);
+                                            } else {
+                                                openSearchDialog(p, targetUUID, targetName);
+                                            }
+                                        }
+                                    },
+                                    opts
+                            )).build()
+                    );
+                }
+
+                // Закрыть
+                buttons.add(io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                                legacy("§c✕ " + cm.getTranslation("close-button")))
                         .action(null)
                         .build()
                 );
 
-                // Собираем диалог
                 io.papermc.paper.dialog.Dialog dialog = io.papermc.paper.dialog.Dialog.create(builder -> builder.empty()
                         .base(io.papermc.paper.registry.data.dialog.DialogBase.builder(
-                                        net.kyori.adventure.text.Component.text("§6" + cm.getTranslation("gui-title") + targetName))
+                                        legacy("§6§l" + cm.getTranslation("gui-title") + "§r§7" + targetName))
                                 .body(bodies)
                                 .build()
                         )
@@ -421,11 +525,64 @@ public class GuiManager {
 
                 player.showDialog(dialog);
 
-                // Сохраняем состояние
                 tm.currentPage.put(player.getUniqueId(), page);
                 tm.searchTargetPlayer.put(player.getUniqueId(), targetName);
                 tm.rollbackTargetUUID.put(player.getUniqueId(), targetUUID);
             });
         });
     }
+
+    public void openSearchDialog(Player player, UUID targetUUID, String targetName) {
+        ConfigManager cm = plugin.getConfigManager();
+
+        var opts = net.kyori.adventure.text.event.ClickCallback.Options.builder()
+                .uses(Integer.MAX_VALUE)
+                .lifetime(java.time.Duration.ofMinutes(5))
+                .build();
+
+        io.papermc.paper.dialog.Dialog dialog = io.papermc.paper.dialog.Dialog.create(builder -> builder.empty()
+                .base(io.papermc.paper.registry.data.dialog.DialogBase.builder(
+                                legacy("§9⌕ " + cm.getTranslation("search-button")))
+                        .body(List.of(
+                                io.papermc.paper.registry.data.dialog.body.DialogBody.plainMessage(
+                                        legacy("§7" + cm.getTranslation("enter-player-name"))
+                                )
+                        ))
+                        .inputs(List.of(
+                                io.papermc.paper.registry.data.dialog.input.DialogInput.text(
+                                        "nick",
+                                        legacy("§fНик игрока")
+                                ).build()
+                        ))
+                        .build()
+                )
+                .type(io.papermc.paper.registry.data.dialog.type.DialogType.confirmation(
+                        io.papermc.paper.registry.data.dialog.ActionButton.builder(legacy("§a" + cm.getTranslation("search-confirm")))
+                                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                        (view, audience) -> {
+                                            if (audience instanceof Player p) {
+                                                String nick = view.getText("nick");
+                                                if (nick != null && !nick.isBlank()) {
+                                                    openDialog(p, 0, targetUUID, targetName, null, nick.trim());
+                                                } else {
+                                                    openDialog(p, 0, targetUUID, targetName, null, null);
+                                                }
+                                            }
+                                        },
+                                        opts
+                                ))
+                                .build(),
+                        io.papermc.paper.registry.data.dialog.ActionButton.builder(legacy("§7← " + cm.getTranslation("back-button")))
+                                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                                        (view, audience) -> { if (audience instanceof Player p) openDialog(p, 0, targetUUID, targetName, null, null); },
+                                        opts
+                                ))
+                                .build()
+                ))
+        );
+
+        player.showDialog(dialog);
+    }
+
+
 }

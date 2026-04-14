@@ -32,7 +32,7 @@ public class TransactionsCommand implements CommandExecutor, TabExecutor {
 
         if (args.length == 0) {
             if (!p.hasPermission("transactions.use")) return noPerm(p);
-            plugin.getGuiManager().openGUI(p, 0, p.getUniqueId(), p.getName());
+            plugin.getGuiManager().openTransactions(p, 0, p.getUniqueId(), p.getName());
             return true;
         }
 
@@ -119,7 +119,7 @@ public class TransactionsCommand implements CommandExecutor, TabExecutor {
                     return true;
                 }
 
-                plugin.getGuiManager().openGUI(p, 0, target.getUniqueId(), target.getName());
+                plugin.getGuiManager().openTransactions(p, 0, target.getUniqueId(), target.getName());
                 return true;
             }
         }

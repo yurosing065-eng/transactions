@@ -1,6 +1,7 @@
 package com.tyurvib.transactions;
 
 import com.google.gson.*;
+import com.tcoded.folialib.FoliaLib;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 
@@ -16,16 +17,18 @@ public class Updater {
     private final String modrinthProjectId;
     private String latestVersion;
     private boolean updateAvailable;
+    private final FoliaLib foliaLib;
 
     public Updater(Transactions plugin, String modrinthProjectId) {
         this.plugin = plugin;
         this.modrinthProjectId = modrinthProjectId;
         this.updateAvailable = false;
         this.latestVersion = plugin.getDescription().getVersion();
+        this.foliaLib = new FoliaLib(plugin);
     }
 
     public void checkForUpdates() {
-        plugin.getServer().getAsyncScheduler().runNow(plugin, (scheduledTask) -> {
+        foliaLib.getScheduler().runAsync((scheduledTask) -> {
             try {
                 URL url = new URL("https://api.modrinth.com/v2/project/" + modrinthProjectId + "/version");
                 HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -64,7 +67,7 @@ public class Updater {
                         String currentVersion = plugin.getDescription().getVersion();
                         if (isVersionNewer(latestVersion, currentVersion)) {
                             this.updateAvailable = true;
-                            plugin.getServer().getGlobalRegionScheduler().run(plugin, (t) ->
+                            foliaLib.getScheduler().runNextTick((t) ->
                                     Bukkit.getConsoleSender().sendMessage(ChatColor.YELLOW + "[Transactions] " + ChatColor.RED +
                                             "A new version (" + ChatColor.YELLOW + latestVersion + ChatColor.RED + ") is available! " +
                                             "Your current version is " + ChatColor.YELLOW + currentVersion + ChatColor.RED + ".")

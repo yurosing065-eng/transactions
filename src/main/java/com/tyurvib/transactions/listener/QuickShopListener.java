@@ -70,9 +70,9 @@ public class QuickShopListener implements Listener {
         tm.addTransaction(purchaserUUID, t);
 
         // Снимаем блокировку через delay после того как Vault вызовы завершились
-        plugin.getServer().getAsyncScheduler().runDelayed(plugin,
-                t2 -> tm.shopInProgress.remove(purchaserUUID),
-                3, TimeUnit.SECONDS);
+        plugin.getFoliaLib().getImpl().runLaterAsync(
+                task -> tm.shopInProgress.remove(purchaserUUID),
+                3 * 20L);
     }
 
 }

@@ -45,7 +45,6 @@ public class TransactionListener implements Listener {
         }
     }
 
-
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onInventoryClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player player)) return;
@@ -79,7 +78,6 @@ public class TransactionListener implements Listener {
             return;
         }
 
-        // Логика подтверждения отката
         if (strippedTitle.contains(rollbackTitle)) {
             if (slot == 11) {
                 Transaction t = tm.pendingRollback.get(player.getUniqueId());
@@ -93,7 +91,6 @@ public class TransactionListener implements Listener {
             return;
         }
 
-        // Навигация
         if (e.getCurrentItem().getType() == Material.ARROW) {
             String name = ChatColor.stripColor(e.getCurrentItem().getItemMeta().getDisplayName());
             if (name.contains(ChatColor.stripColor(plugin.getConfigManager().getTranslation("prev-button")))) {
@@ -124,7 +121,8 @@ public class TransactionListener implements Listener {
                 if (index >= 0 && index < list.size()) {
                     Transaction t = list.get(index);
                     if (t.key.equals("transaction-pay-received") && !t.rolledBack) {
-                        plugin.getServer().getRegionScheduler().run(plugin, player.getLocation(), task -> {
+                        // ✅ было: getRegionScheduler().run(plugin, player.getLocation(), ...)
+                        plugin.getFoliaLib().getImpl().runAtLocation(player.getLocation(), task -> {
                             plugin.getGuiManager().openRollbackGUI(player, t, targetUUID, targetName);
                         });
                     }
@@ -132,13 +130,15 @@ public class TransactionListener implements Listener {
             });
         }
     }
+
     private void performRollback(Player admin, Transaction t, UUID targetUUID, String targetName) {
         if (t.rolledBack) {
             admin.sendMessage("§c" + plugin.getConfigManager().getTranslation("rollback-already-done"));
             return;
         }
 
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+        // ✅ было: getGlobalRegionScheduler().run(plugin, ...)
+        plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String senderName = t.params[0];
             OfflinePlayer sender = Bukkit.getOfflinePlayer(senderName);
             OfflinePlayer receiver = Bukkit.getOfflinePlayer(targetName);
@@ -166,12 +166,14 @@ public class TransactionListener implements Listener {
                         Type.INCOME, "transaction-rollback-received", amount, senBalBefore, senBalBefore + amount, targetName));
 
                 admin.sendMessage("§aRollback successful.");
-                plugin.getServer().getRegionScheduler().run(plugin, admin.getLocation(), t2 -> {
+                // ✅ было: getRegionScheduler().run(plugin, admin.getLocation(), ...)
+                plugin.getFoliaLib().getImpl().runAtLocation(admin.getLocation(), t2 -> {
                     plugin.getGuiManager().openGUI(admin, 0, targetUUID, targetName);
                 });
             }
         });
     }
+
     @EventHandler
     public void onChat(AsyncPlayerChatEvent e) {
         Player p = e.getPlayer();
@@ -189,7 +191,8 @@ public class TransactionListener implements Listener {
                     .filter(t -> java.util.Arrays.stream(t.params).anyMatch(param -> param.equalsIgnoreCase(searchName)))
                     .collect(java.util.stream.Collectors.toList());
 
-            plugin.getServer().getRegionScheduler().run(plugin, p.getLocation(), task -> {
+            // ✅ было: player вместо p (баг!) + getRegionScheduler()
+            plugin.getFoliaLib().getImpl().runAtLocation(p.getLocation(), task -> {
                 if (found.isEmpty()) {
                     p.sendMessage("§c" + plugin.getConfigManager().getTranslation("no-transactions-found", searchName));
                 } else {
@@ -200,6 +203,7 @@ public class TransactionListener implements Listener {
             });
         });
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCommandPreprocess(PlayerCommandPreprocessEvent e) {
         String[] args = e.getMessage().substring(1).split(" ");
@@ -233,7 +237,8 @@ public class TransactionListener implements Listener {
             tm.ecoInProgress.add(senderId);
             tm.ecoInProgress.add(targetId);
 
-            plugin.getServer().getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
+            // ✅ было: getGlobalRegionScheduler().runDelayed(plugin, ..., 5L)
+            plugin.getFoliaLib().getImpl().runLater(task -> {
                 double senderBalAfter = plugin.getEconomy().getBalance(sender);
                 double senderDelta = senderBalBefore - senderBalAfter;
                 if (senderDelta > 0.01) {
@@ -256,7 +261,6 @@ public class TransactionListener implements Listener {
             return;
         }
 
-
         if ((cmd.equals("eco") || cmd.equals("economy")) && args.length >= 4) {
             String sub = args[1].toLowerCase();
             String targetName = args[2];
@@ -270,7 +274,8 @@ public class TransactionListener implements Listener {
             double balanceBefore = plugin.getEconomy().getBalance(target);
             tm.ecoInProgress.add(tId);
 
-            plugin.getServer().getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
+            // ✅ было: getGlobalRegionScheduler().runDelayed(plugin, ..., 5L)
+            plugin.getFoliaLib().getImpl().runLater(task -> {
                 double balanceAfter = plugin.getEconomy().getBalance(target);
                 double delta = balanceAfter - balanceBefore;
 
@@ -288,13 +293,9 @@ public class TransactionListener implements Listener {
             }, 5L);
         }
     }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onWithdraw(PlayerWithdrawEvent e) {
-        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-        StringBuilder sb = new StringBuilder("WITHDRAW STACK:\n");
-        for (StackTraceElement el : stack) {
-            sb.append("  ").append(el.getClassName()).append(".").append(el.getMethodName()).append("\n");
-        }
         if (!plugin.getConfigManager().logExternalTransactions) return;
 
         UUID uuid = e.getOfflinePlayer().getUniqueId();
@@ -304,11 +305,11 @@ public class TransactionListener implements Listener {
                 tm.ecoInProgress.contains(uuid) ||
                 tm.shopInProgress.contains(uuid)) return;
 
-        // Проверяем стек только на игнорируемые плагины
         if (isCalledByIgnoredPlugin()) return;
 
         double amount = e.getAmount();
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+        // ✅ было: getGlobalRegionScheduler().run(plugin, ...)
+        plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-withdraw";
             if (!isEventEnabled(eventKey)) return;
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
@@ -334,7 +335,8 @@ public class TransactionListener implements Listener {
         if (isCalledByIgnoredPlugin()) return;
 
         double amount = e.getAmount();
-        plugin.getServer().getGlobalRegionScheduler().run(plugin, task -> {
+        // ✅ было: getGlobalRegionScheduler().run(plugin, ...)
+        plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-deposit";
             if (!isEventEnabled(eventKey)) return;
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
@@ -359,8 +361,6 @@ public class TransactionListener implements Listener {
 
     private boolean isEventEnabled(String key) {
         Map<String, Boolean> events = plugin.getConfigManager().eventEnabled;
-        // Если ключ не настроен в конфиге — по умолчанию включён
         return events.getOrDefault(key, true);
     }
-
 }
