@@ -10,6 +10,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -20,10 +21,12 @@ import org.bukkit.profile.PlayerTextures;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class GuiManager {
     private final Transactions plugin;
+    private final Map<String, ItemStack> headCache = new ConcurrentHashMap<>();
     private final ItemStack INCOME_ITEM = getHead(getTransactionHeadBase64(Type.INCOME));
     private final ItemStack EXPENSE_ITEM = getHead(getTransactionHeadBase64(Type.EXPENSE));
     private final ItemStack PAY_ITEM = getHead(getTransactionHeadBase64(Type.YELLOW));
@@ -33,7 +36,7 @@ public class GuiManager {
     private final FoliaLib foliaLib;
     public GuiManager(Transactions plugin) {
         this.plugin = plugin;
-        this.foliaLib = new FoliaLib(plugin);
+        this.foliaLib = plugin.getFoliaLib();
     }
 
     public void openGUI(Player player, int page, UUID targetUUID, String targetName) {
@@ -231,13 +234,14 @@ public class GuiManager {
     }
 
     public ItemStack getPlayerHead(String playerName) {
-        ItemStack item = new ItemStack(Material.PLAYER_HEAD);
-        SkullMeta meta = (SkullMeta) item.getItemMeta();
-        meta.setOwningPlayer(Bukkit.getOfflinePlayer(playerName));
-        item.setItemMeta(meta);
-        return item;
+        return headCache.computeIfAbsent(playerName, name -> {
+            ItemStack item = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta meta = (SkullMeta) item.getItemMeta();
+            meta.setOwningPlayer(Bukkit.getOfflinePlayer(name));
+            item.setItemMeta(meta);
+            return item;
+        });
     }
-
     public static ItemStack getHead(String base64) {
         ItemStack item = new ItemStack(Material.PLAYER_HEAD);
         SkullMeta skullMeta = (SkullMeta) Objects.requireNonNull(item.getItemMeta());
@@ -293,6 +297,10 @@ public class GuiManager {
             // значит диалоги поддерживаются
             return true;
         }
+    }
+    @EventHandler
+    public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
+        plugin.getTransactionManager().onPlayerQuit(e.getPlayer().getUniqueId());
     }
 
     private static net.kyori.adventure.text.Component legacy(String s) {
@@ -540,6 +548,39 @@ public class GuiManager {
                 .lifetime(java.time.Duration.ofMinutes(5))
                 .build();
 
+        var nickInput = io.papermc.paper.registry.data.dialog.input.DialogInput.text(
+                "nick",
+                legacy("§fНик игрока")
+        ).build();
+
+        var confirmBtn = io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                        legacy("§a" + cm.getTranslation("search-confirm")))
+                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                        (view, audience) -> {
+                            if (audience instanceof Player p) {
+                                String nick = view.getText("nick");
+                                if (nick != null && !nick.isBlank()) {
+                                    openDialog(p, 0, targetUUID, targetName, null, nick.trim());
+                                } else {
+                                    openDialog(p, 0, targetUUID, targetName, null, null);
+                                }
+                            }
+                        },
+                        opts
+                ))
+                .build();
+
+        var backBtn = io.papermc.paper.registry.data.dialog.ActionButton.builder(
+                        legacy("§7← " + cm.getTranslation("back-button")))
+                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
+                        (view, audience) -> {
+                            if (audience instanceof Player p)
+                                openDialog(p, 0, targetUUID, targetName, null, null);
+                        },
+                        opts
+                ))
+                .build();
+
         io.papermc.paper.dialog.Dialog dialog = io.papermc.paper.dialog.Dialog.create(builder -> builder.empty()
                 .base(io.papermc.paper.registry.data.dialog.DialogBase.builder(
                                 legacy("§9⌕ " + cm.getTranslation("search-button")))
@@ -548,37 +589,12 @@ public class GuiManager {
                                         legacy("§7" + cm.getTranslation("enter-player-name"))
                                 )
                         ))
-                        .inputs(List.of(
-                                io.papermc.paper.registry.data.dialog.input.DialogInput.text(
-                                        "nick",
-                                        legacy("§fНик игрока")
-                                ).build()
-                        ))
+                        .inputs(List.of(nickInput))
                         .build()
                 )
-                .type(io.papermc.paper.registry.data.dialog.type.DialogType.confirmation(
-                        io.papermc.paper.registry.data.dialog.ActionButton.builder(legacy("§a" + cm.getTranslation("search-confirm")))
-                                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
-                                        (view, audience) -> {
-                                            if (audience instanceof Player p) {
-                                                String nick = view.getText("nick");
-                                                if (nick != null && !nick.isBlank()) {
-                                                    openDialog(p, 0, targetUUID, targetName, null, nick.trim());
-                                                } else {
-                                                    openDialog(p, 0, targetUUID, targetName, null, null);
-                                                }
-                                            }
-                                        },
-                                        opts
-                                ))
-                                .build(),
-                        io.papermc.paper.registry.data.dialog.ActionButton.builder(legacy("§7← " + cm.getTranslation("back-button")))
-                                .action(io.papermc.paper.registry.data.dialog.action.DialogAction.customClick(
-                                        (view, audience) -> { if (audience instanceof Player p) openDialog(p, 0, targetUUID, targetName, null, null); },
-                                        opts
-                                ))
-                                .build()
-                ))
+                .type(io.papermc.paper.registry.data.dialog.type.DialogType.multiAction(
+                        List.of(confirmBtn, backBtn)
+                ).build())
         );
 
         player.showDialog(dialog);

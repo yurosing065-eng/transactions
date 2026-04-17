@@ -25,6 +25,7 @@ import org.bukkit.event.server.ServerCommandEvent;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class TransactionListener implements Listener {
@@ -305,10 +306,8 @@ public class TransactionListener implements Listener {
                 tm.ecoInProgress.contains(uuid) ||
                 tm.shopInProgress.contains(uuid)) return;
 
-        if (isCalledByIgnoredPlugin()) return;
 
         double amount = e.getAmount();
-        // ✅ было: getGlobalRegionScheduler().run(plugin, ...)
         plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-withdraw";
             if (!isEventEnabled(eventKey)) return;
@@ -332,10 +331,9 @@ public class TransactionListener implements Listener {
                 tm.ecoInProgress.contains(uuid) ||
                 tm.shopInProgress.contains(uuid)) return;
 
-        if (isCalledByIgnoredPlugin()) return;
+
 
         double amount = e.getAmount();
-        // ✅ было: getGlobalRegionScheduler().run(plugin, ...)
         plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-deposit";
             if (!isEventEnabled(eventKey)) return;
@@ -345,22 +343,24 @@ public class TransactionListener implements Listener {
         });
     }
 
-    private boolean isCalledByIgnoredPlugin() {
-        List<String> ignored = plugin.getConfigManager().ignoredPlugins;
-        if (ignored.isEmpty()) return false;
 
-        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-        for (StackTraceElement el : stack) {
-            String cls = el.getClassName().toLowerCase();
-            for (String pluginName : ignored) {
-                if (cls.contains(pluginName.toLowerCase())) return true;
-            }
-        }
-        return false;
-    }
 
     private boolean isEventEnabled(String key) {
         Map<String, Boolean> events = plugin.getConfigManager().eventEnabled;
         return events.getOrDefault(key, true);
+    }
+    @EventHandler
+    public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
+        UUID uuid = e.getPlayer().getUniqueId();
+        TransactionManager tm = plugin.getTransactionManager();
+        if (tm.isDirty(uuid)) {
+            plugin.getDatabaseManager().savePlayerSettingsSync(
+                    Set.of(uuid),
+                    tm.playerGmtOffset,
+                    tm.playerFilters,
+                    tm.showBalance
+            );
+        }
+        tm.onPlayerQuit(uuid);
     }
 }

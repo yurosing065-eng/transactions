@@ -107,10 +107,21 @@ public class ConfigManager {
     }
 
     public String getTranslatedDescription(Transaction t) {
-        String translated = translations.getOrDefault(t.key, t.key);
-        for (int i = 0; i < t.params.length; i++) {
-            translated = translated.replace("%p" + (i + 1) + "%", t.params[i]);
+        if (t == null) {
+            return "§fUnknown transaction";
         }
+
+        String translated = translations.getOrDefault(t.key, t.key != null ? t.key : "Unknown");
+
+        // Безопасная замена параметров
+        if (t.params != null) {
+            for (int i = 0; i < t.params.length; i++) {
+                String value = (t.params[i] != null) ? t.params[i] : "";
+                translated = translated.replace("%p" + (i + 1) + "%", value);
+            }
+        }
+
+        // Определяем цвета
         String messageColor, amountColor;
         switch (t.type) {
             case INCOME:
@@ -129,7 +140,11 @@ public class ConfigManager {
                 messageColor = "§f";
                 amountColor = "§a";
         }
-        String formattedAmount = "(" + (t.type == Type.INCOME ? "+" : t.type == Type.EXPENSE ? "-" : "") + amountFormatter.format(t.amount) + " " + prefix + ")";
+
+        // Форматируем сумму
+        String sign = (t.type == Type.INCOME) ? "+" : (t.type == Type.EXPENSE) ? "-" : "";
+        String formattedAmount = "(" + sign + amountFormatter.format(Math.abs(t.amount)) + " " + prefix + ")";
+
         return messageColor + translated + " " + amountColor + formattedAmount;
     }
 

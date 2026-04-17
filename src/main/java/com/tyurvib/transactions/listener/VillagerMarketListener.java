@@ -41,7 +41,6 @@ public class VillagerMarketListener implements Listener {
         if (ownerName == null) ownerName = "Admin";
 
         TransactionManager tm = plugin.getTransactionManager();
-        tm.ecoInProgress.add(uuid);
 
         double balBefore = plugin.getEconomy().getBalance(player);
         double balAfter = balBefore - total;
@@ -56,7 +55,10 @@ public class VillagerMarketListener implements Listener {
         plugin.getFoliaLib().getImpl().runLaterAsync(
                 task -> tm.ecoInProgress.remove(uuid), 3 * 20L);
     }
-
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBuyEarly(BuyShopItemsEvent e) {
+        plugin.getTransactionManager().ecoInProgress.add(e.getPlayer().getUniqueId());
+    }
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onSellShopItems(SellShopItemsEvent e) {
         String eventKey = "transaction-villagermarket-sell";
@@ -74,7 +76,6 @@ public class VillagerMarketListener implements Listener {
         if (ownerName == null) ownerName = "Admin";
 
         TransactionManager tm = plugin.getTransactionManager();
-        tm.ecoInProgress.add(uuid);
 
         double balBefore = plugin.getEconomy().getBalance(player);
         double balAfter = balBefore + total;
@@ -89,4 +90,9 @@ public class VillagerMarketListener implements Listener {
         plugin.getFoliaLib().getImpl().runLaterAsync(
                 task -> tm.ecoInProgress.remove(uuid), 3 * 20L);
     }
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSellEarly(SellShopItemsEvent e) {
+        plugin.getTransactionManager().ecoInProgress.add(e.getPlayer().getUniqueId());
+    }
+
 }

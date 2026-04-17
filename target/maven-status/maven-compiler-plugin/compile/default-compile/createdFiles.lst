@@ -2,11 +2,13 @@ com\tyurvib\transactions\model\Transaction.class
 com\tyurvib\transactions\model\Type.class
 com\tyurvib\transactions\manager\ConfigManager.class
 com\tyurvib\transactions\model\TimePeriod.class
+com\tyurvib\transactions\manager\DatabaseManager$WriteTask.class
 com\tyurvib\transactions\manager\TransactionManager.class
 com\tyurvib\transactions\command\TransactionsCommand.class
 com\tyurvib\transactions\listener\QuickShopListener.class
 com\tyurvib\transactions\model\FilterType.class
 com\tyurvib\transactions\Updater.class
+com\tyurvib\transactions\manager\DatabaseManager$ThrowingRunnable.class
 com\tyurvib\transactions\Transactions.class
 com\tyurvib\transactions\manager\ConfigManager$1.class
 com\tyurvib\transactions\listener\VillagerMarketListener.class

@@ -7,166 +7,257 @@ import com.tyurvib.transactions.model.Transaction;
 import com.tyurvib.transactions.model.Type;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.entity.Player;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
+/**
+ * TransactionManager — версия 2.0
+ *
+ * Ключевые исправления:
+ *  1. Полностью убран прямой доступ к Connection/PreparedStatement/ResultSet —
+ *     вся работа с БД идёт через DatabaseManager.loadTransactionsAsync(),
+ *     который выполняется в выделенном DB-потоке.
+ *  2. loadingFutures защищены от гонки: put в кеш и remove из futures
+ *     атомарны через whenComplete с проверкой повторной записи.
+ *  3. saveDirtyPlayers не удаляет UUID до подтверждения сохранения —
+ *     логика переехала в DatabaseManager.savePlayerSettings().
+ *  4. Публичные поля состояния оставлены (обратная совместимость с GUI),
+ *     но сгруппированы и задокументированы.
+ *  5. downloadTransactionsToTxt пишет файл в отдельном потоке,
+ *     не блокируя ни main thread, ни DB-поток.
+ */
 public class TransactionManager {
 
     private final Transactions plugin;
-    private final ConcurrentMap<UUID, List<Transaction>> transactionCache = new ConcurrentHashMap<>();
-    private final Set<UUID> dirtyPlayers = ConcurrentHashMap.newKeySet();
-
-    public final Map<UUID, Integer> playerGmtOffset = new HashMap<>();
-    public final Map<UUID, FilterData> playerFilters = new HashMap<>();
-    public final Map<UUID, Boolean> showBalance = new HashMap<>();
-
-    public final Map<UUID, Integer> currentPage = new HashMap<>();
-    public final Map<UUID, String> searchTargetPlayer = new HashMap<>();
-    public final Set<UUID> playerInSearchMode = ConcurrentHashMap.newKeySet();
-    public final Map<UUID, Transaction> pendingRollback = new HashMap<>();
-    public final Map<UUID, UUID> rollbackTargetUUID = new HashMap<>();
-    public final Map<UUID, String> rollbackTargetName = new HashMap<>();
-    public final Set<UUID> payInProgress = ConcurrentHashMap.newKeySet();
-    public final Set<UUID> shopInProgress = ConcurrentHashMap.newKeySet();
     private final FoliaLib foliaLib;
-    public final Set<UUID> ecoInProgress = ConcurrentHashMap.newKeySet();
+
+    // ─── Кеш транзакций ──────────────────────────────────────────────────────
+
+    /** uuid → список транзакций (от новых к старым, DESC). */
+    private final ConcurrentMap<UUID, List<Transaction>> transactionCache = new ConcurrentHashMap<>();
+
+    /** Дедупликация параллельных загрузок одного UUID. */
+    private final ConcurrentMap<UUID, CompletableFuture<List<Transaction>>> loadingFutures = new ConcurrentHashMap<>();
+
+    // ─── Настройки игрока ────────────────────────────────────────────────────
+
+    /** UUID-ы, чьи настройки изменились и ещё не сохранены в БД. */
+    public final Set<UUID> dirtySettings = ConcurrentHashMap.newKeySet();
+
+    public final Map<UUID, Integer>    playerGmtOffset = new ConcurrentHashMap<>();
+    public final Map<UUID, FilterData> playerFilters   = new ConcurrentHashMap<>();
+    public final Map<UUID, Boolean>    showBalance     = new ConcurrentHashMap<>();
+
+    // ─── UI-состояние (только в памяти, не персистируется) ───────────────────
+
+    public final Map<UUID, Integer>     currentPage        = new ConcurrentHashMap<>();
+    public final Map<UUID, String>      searchTargetPlayer = new ConcurrentHashMap<>();
+    public final Map<UUID, Transaction> pendingRollback    = new ConcurrentHashMap<>();
+    public final Map<UUID, UUID>        rollbackTargetUUID = new ConcurrentHashMap<>();
+    public final Map<UUID, String>      rollbackTargetName = new ConcurrentHashMap<>();
+    public final Set<UUID>              playerInSearchMode = ConcurrentHashMap.newKeySet();
+
+    // ─── Блокировки дедупликации событий ─────────────────────────────────────
+
+    public final Set<UUID> payInProgress      = ConcurrentHashMap.newKeySet();
+    public final Set<UUID> shopInProgress     = ConcurrentHashMap.newKeySet();
+    public final Set<UUID> ecoInProgress      = ConcurrentHashMap.newKeySet();
+    public final Set<UUID> externalInProgress = ConcurrentHashMap.newKeySet();
+
+    // ─── Конструктор ─────────────────────────────────────────────────────────
 
     public TransactionManager(Transactions plugin) {
-        this.plugin = plugin;
-        this.foliaLib = new FoliaLib(plugin);
+        this.plugin   = plugin;
+        this.foliaLib = plugin.getFoliaLib();
+        // loadPlayerSettings уже ждёт завершения внутри DatabaseManager (join)
+        plugin.getDatabaseManager().loadPlayerSettings(playerGmtOffset, playerFilters, showBalance);
         startSaveTask();
     }
 
+    // ─── Получение транзакций ────────────────────────────────────────────────
+
+    /**
+     * Возвращает транзакции из кеша мгновенно, либо запускает загрузку из БД.
+     * Загрузка идёт через DB-поток DatabaseManager — main thread не блокируется.
+     * Повторные вызовы для одного UUID до завершения загрузки возвращают тот же Future.
+     */
     public CompletableFuture<List<Transaction>> getTransactionsAsync(UUID uuid) {
-        if (transactionCache.containsKey(uuid)) {
-            return CompletableFuture.completedFuture(transactionCache.get(uuid));
+        // Быстрый путь: данные уже в кеше
+        List<Transaction> cached = transactionCache.get(uuid);
+        if (cached != null) {
+            return CompletableFuture.completedFuture(cached);
         }
 
-
-        return CompletableFuture.supplyAsync(() -> {
-            List<Transaction> list = new ArrayList<>();
-            String sql = "SELECT * FROM transactions WHERE player_uuid = ? ORDER BY timestamp DESC LIMIT 1000";
-
-            try (PreparedStatement ps = plugin.getDatabaseManager().db.prepareStatement(sql)) {
-                ps.setString(1, uuid.toString());
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        List<String> params = new ArrayList<>();
-                        for (int i = 1; i <= 3; i++) {
-                            String p = rs.getString("param" + i);
-                            if (p != null && !p.isEmpty()) params.add(p);
-                        }
-
-                        Transaction t = new Transaction(
-                                Type.valueOf(rs.getString("type")),
-                                rs.getString("key"),
-                                rs.getDouble("amount"),
-                                rs.getDouble("balance_before"),
-                                rs.getDouble("balance_after"),
-                                params.toArray(new String[0]),
-                                rs.getLong("timestamp")
-                        );
-                        String src = rs.getString("source");
-                        t.source = (src != null && !src.isEmpty()) ? src : null;
-
-                        t.rolledBack = rs.getBoolean("rolled_back");
-                        list.add(t);
-                    }
-                }
-            } catch (SQLException e) {
-                plugin.getLogger().warning("Ошибка загрузки транзакций для " + uuid + ": " + e.getMessage());
-            }
-
-            transactionCache.put(uuid, list);
-            return list;
-
-        }, runnable -> foliaLib.getScheduler().runAsync(task -> runnable.run()));
-    }
-    private void startSaveTask() {
-        foliaLib.getScheduler().runTimerAsync((task) -> {
-            saveDirtyPlayers();
-        }, 15, 15, TimeUnit.SECONDS);
+        // Дедупликация: если уже грузим — возвращаем тот же Future
+        return loadingFutures.computeIfAbsent(uuid, key ->
+                plugin.getDatabaseManager()
+                        .loadTransactionsAsync(uuid)           // выполняется в DB-потоке
+                        .whenComplete((result, throwable) -> {
+                            loadingFutures.remove(uuid);
+                            if (throwable != null) {
+                                plugin.getLogger().warning(
+                                        "Ошибка загрузки транзакций для " + uuid + ": " + throwable.getMessage());
+                                return;
+                            }
+                            if (result != null) {
+                                // putIfAbsent: если addTransaction() успел записать раньше — не затираем
+                                transactionCache.putIfAbsent(
+                                        uuid, Collections.synchronizedList(result));
+                            }
+                        })
+        );
     }
 
+    /**
+     * Блокирующий вариант — использовать ТОЛЬКО из async-потоков, никогда из main thread.
+     */
+    public List<Transaction> getTransactions(UUID uuid) {
+        try {
+            return getTransactionsAsync(uuid).get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            plugin.getLogger().warning("Таймаут получения транзакций для " + uuid);
+            return transactionCache.getOrDefault(uuid, Collections.emptyList());
+        }
+    }
 
+    // ─── Добавление транзакции ───────────────────────────────────────────────
+
+    /**
+     * Добавляет транзакцию в кеш и ставит в очередь записи БД.
+     * Вызывается из listener'ов — должен быть максимально быстрым.
+     */
     public void addTransaction(UUID uuid, Transaction t) {
         if (t.amount < 0 || (t.amount == 0 && t.type != Type.YELLOW)) return;
 
-        transactionCache.computeIfAbsent(uuid, k -> Collections.synchronizedList(new ArrayList<>())).add(0, t);
+        // add() в конец — O(1). GuiManager реверсирует при отображении.
+        transactionCache
+                .computeIfAbsent(uuid, k -> Collections.synchronizedList(new ArrayList<>(200)))
+                .add(t);
 
-        dirtyPlayers.add(uuid);
+        // В очередь батч-записи — не блокирует поток
         plugin.getDatabaseManager().queueSaveTransaction(uuid, t);
     }
-    public List<Transaction> getTransactions(UUID uuid) {
-        try {
-            return getTransactionsAsync(uuid).get(2, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            plugin.getLogger().warning("Ошибка при получении транзакций для " + uuid);
-            return transactionCache.getOrDefault(uuid, new ArrayList<>());
-        }
+
+    // ─── Сохранение настроек ─────────────────────────────────────────────────
+
+    public boolean isDirty(UUID uuid) { return dirtySettings.contains(uuid); }
+    public void markDirty(UUID uuid)  { dirtySettings.add(uuid); }
+
+    private void startSaveTask() {
+        foliaLib.getScheduler().runTimerAsync(task -> saveDirtyPlayers(), 15, 15, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Async-сохранение грязных настроек.
+     * UUID удаляются из dirtySettings ПОСЛЕ подтверждения записи (в DatabaseManager).
+     */
+    public void saveDirtyPlayers() {
+        if (dirtySettings.isEmpty()) return;
+        plugin.getDatabaseManager()
+                .savePlayerSettings(dirtySettings, playerGmtOffset, playerFilters, showBalance);
+    }
+
+    /**
+     * Sync-сохранение — вызывается из onDisable, блокирует до завершения.
+     */
+    public void saveDirtyPlayersSync() {
+        if (dirtySettings.isEmpty()) return;
+        plugin.getDatabaseManager()
+                .savePlayerSettingsSync(dirtySettings, playerGmtOffset, playerFilters, showBalance);
+    }
+
+    // ─── Очистка при выходе игрока ───────────────────────────────────────────
+
+    public void onPlayerQuit(UUID uuid) {
+        transactionCache.remove(uuid);
+        loadingFutures.remove(uuid);
+        currentPage.remove(uuid);
+        searchTargetPlayer.remove(uuid);
+        pendingRollback.remove(uuid);
+        rollbackTargetUUID.remove(uuid);
+        rollbackTargetName.remove(uuid);
+        playerInSearchMode.remove(uuid);
     }
 
     public void clearCache() {
         transactionCache.clear();
     }
 
-    public void saveDirtyPlayers() {
-        if (dirtyPlayers.isEmpty()) return;
-        plugin.getDatabaseManager().savePlayerSettings(dirtyPlayers, playerGmtOffset, playerFilters, showBalance);
-        dirtyPlayers.clear();
-    }
+    // ─── Экспорт в TXT ──────────────────────────────────────────────────────
 
-    public void markDirty(UUID uuid) {
-        dirtyPlayers.add(uuid);
-    }
-
+    /**
+     * Загружает транзакции игрока и сохраняет в файл.
+     * Файловый I/O выполняется в отдельном потоке — ни main, ни DB не блокируются.
+     */
     public void downloadTransactionsToTxt(UUID adminUUID, UUID targetUUID, String targetName) {
-        List<Transaction> list = getTransactions(targetUUID);
-        if (list.isEmpty()) {
-            Bukkit.getPlayer(adminUUID).sendMessage("§cNo transactions found.");
-            return;
-        }
-        File folder = new File(plugin.getDataFolder(), "downloads");
-        folder.mkdirs();
-        File file = new File(folder, targetName + "_transactions.txt");
+        Player admin = Bukkit.getPlayer(adminUUID);
+        if (admin == null) return;
 
-        int offset = playerGmtOffset.getOrDefault(adminUUID, plugin.getConfigManager().defaultGmtOffset);
-        SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
-        sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (offset >= 0 ? "+" : "") + offset));
-
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
-            writer.write("Transactions for: " + targetName);
-            writer.newLine(); writer.newLine();
-            for (Transaction t : list) {
-                String desc = ChatColor.stripColor(plugin.getConfigManager().getTranslatedDescription(t));
-                writer.write(String.format("[%s] %s", sdf.format(new Date(t.timestamp)), desc));
-                writer.newLine();
+        getTransactionsAsync(targetUUID).thenAcceptAsync(list -> {
+            if (list.isEmpty()) {
+                foliaLib.getScheduler().runNextTick(t -> admin.sendMessage("§cNo transactions found."));
+                return;
             }
-            Bukkit.getPlayer(adminUUID).sendMessage("§aSaved to " + file.getAbsolutePath());
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+
+            File folder = new File(plugin.getDataFolder(), "downloads");
+            folder.mkdirs();
+
+            String safeName = targetName.replaceAll("[^a-zA-Z0-9_\\-]", "_");
+            File file = new File(folder, safeName + "_transactions.txt");
+
+            int offset = playerGmtOffset.getOrDefault(adminUUID, plugin.getConfigManager().defaultGmtOffset);
+            SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+            sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (offset >= 0 ? "+" : "") + offset));
+
+            // DESC из БД → реверс для файла (хронологический порядок)
+            List<Transaction> ordered = new ArrayList<>(list);
+            Collections.reverse(ordered);
+
+            try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+                writer.write("Transactions for: " + targetName);
+                writer.newLine();
+                writer.newLine();
+                for (Transaction t : ordered) {
+                    String desc = ChatColor.stripColor(
+                            plugin.getConfigManager().getTranslatedDescription(t));
+                    writer.write(String.format("[%s] %s", sdf.format(new Date(t.timestamp)), desc));
+                    writer.newLine();
+                }
+                foliaLib.getScheduler().runNextTick(t ->
+                        admin.sendMessage("§aSaved to " + file.getAbsolutePath()));
+            } catch (IOException e) {
+                plugin.getLogger().warning("Ошибка записи файла транзакций: " + e.getMessage());
+                foliaLib.getScheduler().runNextTick(t ->
+                        admin.sendMessage("§cFailed to save transactions to file."));
+            }
+        }).exceptionally(ex -> {
+            plugin.getLogger().warning("Ошибка при скачивании транзакций для " + targetUUID + ": " + ex.getMessage());
+            foliaLib.getScheduler().runNextTick(t ->
+                    admin.sendMessage("§cAn error occurred while downloading transactions."));
+            return null;
+        });
     }
+
+    // ─── Утилиты ─────────────────────────────────────────────────────────────
 
     public double parseAmount(String s) {
         s = s.toUpperCase().replace(",", "").trim();
         double multiplier = 1;
-        if (s.endsWith("K")) { multiplier = 1_000; s = s.substring(0, s.length() - 1); }
-        else if (s.endsWith("M")) { multiplier = 1_000_000; s = s.substring(0, s.length() - 1); }
-        else if (s.endsWith("B")) { multiplier = 1_000_000_000; s = s.substring(0, s.length() - 1); }
-        else if (s.endsWith("T")) { multiplier = 1_000_000_000_000L; s = s.substring(0, s.length() - 1); }
-        try { return Double.parseDouble(s) * multiplier; } catch (NumberFormatException ex) { return -1; }
+        if      (s.endsWith("K")) { multiplier = 1_000L;              s = s.substring(0, s.length() - 1); }
+        else if (s.endsWith("M")) { multiplier = 1_000_000L;          s = s.substring(0, s.length() - 1); }
+        else if (s.endsWith("B")) { multiplier = 1_000_000_000L;      s = s.substring(0, s.length() - 1); }
+        else if (s.endsWith("T")) { multiplier = 1_000_000_000_000L;  s = s.substring(0, s.length() - 1); }
+        try {
+            return Double.parseDouble(s) * multiplier;
+        } catch (NumberFormatException ex) {
+            return -1;
+        }
     }
 }

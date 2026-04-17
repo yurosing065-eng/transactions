@@ -49,8 +49,7 @@ public class QuickShopListener implements Listener {
         OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(purchaserUUID);
         final String finalOwnerName = shopOwnerName;
 
-        // Блокируем ДО того как QuickShop вызовет Vault
-        tm.shopInProgress.add(purchaserUUID);
+
 
         // Берём баланс ДО операции прямо сейчас
         double balBefore = plugin.getEconomy().getBalance(offlinePlayer);
@@ -74,5 +73,13 @@ public class QuickShopListener implements Listener {
                 task -> tm.shopInProgress.remove(purchaserUUID),
                 3 * 20L);
     }
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onShopPurchaseEarly(ShopSuccessPurchaseEvent e) {
+        UUID purchaserUUID = e.getPurchaser().getUniqueIdIfRealPlayer().orElse(null);
+        if (purchaserUUID == null) return;
+        plugin.getTransactionManager().shopInProgress.add(purchaserUUID);
+    }
+
+
 
 }

@@ -10,6 +10,7 @@ import com.tyurvib.transactions.manager.DatabaseManager;
 import com.tyurvib.transactions.manager.GuiManager;
 import com.tyurvib.transactions.manager.TransactionManager;
 import net.milkbowl.vault.economy.Economy;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -53,7 +54,12 @@ public class Transactions extends JavaPlugin {
     public FoliaLib getFoliaLib() { return foliaLib; }
     @Override
     public void onDisable() {
-        if (transactionManager != null) transactionManager.saveDirtyPlayers();
+        if (transactionManager != null) {
+            for (org.bukkit.entity.Player p : getServer().getOnlinePlayers()) {
+                transactionManager.markDirty(p.getUniqueId());
+            }
+            transactionManager.saveDirtyPlayersSync();
+        }
         if (databaseManager != null) databaseManager.close();
     }
 
