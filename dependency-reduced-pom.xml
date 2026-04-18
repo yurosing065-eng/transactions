@@ -4,7 +4,7 @@
   <groupId>com.tyurvib</groupId>
   <artifactId>Transactions</artifactId>
   <name>Transactions</name>
-  <version>1.4.1</version>
+  <version>1.4.2</version>
   <build>
     <resources>
       <resource>

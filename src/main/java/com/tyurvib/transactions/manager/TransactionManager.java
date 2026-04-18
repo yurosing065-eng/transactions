@@ -136,15 +136,11 @@ public class TransactionManager {
     public void addTransaction(UUID uuid, Transaction t) {
         if (t.amount < 0 || (t.amount == 0 && t.type != Type.YELLOW)) return;
 
-        // add() в конец — O(1). GuiManager реверсирует при отображении.
         transactionCache
                 .computeIfAbsent(uuid, k -> Collections.synchronizedList(new ArrayList<>(200)))
                 .add(t);
-
-        // В очередь батч-записи — не блокирует поток
         plugin.getDatabaseManager().queueSaveTransaction(uuid, t);
     }
-
     // ─── Сохранение настроек ─────────────────────────────────────────────────
 
     public boolean isDirty(UUID uuid) { return dirtySettings.contains(uuid); }
@@ -245,7 +241,6 @@ public class TransactionManager {
         });
     }
 
-    // ─── Утилиты ─────────────────────────────────────────────────────────────
 
     public double parseAmount(String s) {
         s = s.toUpperCase().replace(",", "").trim();

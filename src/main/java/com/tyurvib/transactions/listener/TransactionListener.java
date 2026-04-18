@@ -300,22 +300,22 @@ public class TransactionListener implements Listener {
         if (!plugin.getConfigManager().logExternalTransactions) return;
 
         UUID uuid = e.getOfflinePlayer().getUniqueId();
-        TransactionManager tm = plugin.getTransactionManager();
-
-        if (tm.payInProgress.contains(uuid) ||
-                tm.ecoInProgress.contains(uuid) ||
-                tm.shopInProgress.contains(uuid)) return;
-
-
         double amount = e.getAmount();
+
         plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-withdraw";
             if (!isEventEnabled(eventKey)) return;
+
+            TransactionManager tm = plugin.getTransactionManager();
+            if (tm.payInProgress.contains(uuid) ||
+                    tm.ecoInProgress.contains(uuid) ||
+                    tm.shopInProgress.contains(uuid)) return;
+
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
             double balanceAfter = Math.max(0, balanceBefore - amount);
-            if (balanceBefore - balanceAfter > 0 || amount > 0) {
-                Transaction t = new Transaction(Type.EXPENSE, eventKey, amount, balanceBefore, balanceAfter);
-                plugin.getTransactionManager().addTransaction(uuid, t);
+            if (amount > 0) {
+                plugin.getTransactionManager().addTransaction(uuid,
+                        new Transaction(Type.EXPENSE, eventKey, amount, balanceBefore, balanceAfter));
             }
         });
     }
@@ -325,21 +325,20 @@ public class TransactionListener implements Listener {
         if (!plugin.getConfigManager().logExternalTransactions) return;
 
         UUID uuid = e.getOfflinePlayer().getUniqueId();
-        TransactionManager tm = plugin.getTransactionManager();
-
-        if (tm.payInProgress.contains(uuid) ||
-                tm.ecoInProgress.contains(uuid) ||
-                tm.shopInProgress.contains(uuid)) return;
-
-
-
         double amount = e.getAmount();
+
         plugin.getFoliaLib().getImpl().runNextTick(task -> {
             String eventKey = "transaction-external-deposit";
             if (!isEventEnabled(eventKey)) return;
+
+            TransactionManager tm = plugin.getTransactionManager();
+            if (tm.payInProgress.contains(uuid) ||
+                    tm.ecoInProgress.contains(uuid) ||
+                    tm.shopInProgress.contains(uuid)) return;
+
             double balanceBefore = plugin.getEconomy().getBalance(e.getOfflinePlayer());
-            Transaction t = new Transaction(Type.INCOME, eventKey, amount, balanceBefore, balanceBefore + amount);
-            plugin.getTransactionManager().addTransaction(uuid, t);
+            plugin.getTransactionManager().addTransaction(uuid,
+                    new Transaction(Type.INCOME, eventKey, amount, balanceBefore, balanceBefore + amount));
         });
     }
 

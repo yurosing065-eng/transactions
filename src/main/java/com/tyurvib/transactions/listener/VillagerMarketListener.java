@@ -31,6 +31,11 @@ public class VillagerMarketListener implements Listener {
 
         Player player = e.getPlayer();
         UUID uuid = player.getUniqueId();
+        TransactionManager tm = plugin.getTransactionManager();
+
+        // Блокировка в самом начале — до любых Vault-вызовов
+        tm.shopInProgress.add(uuid);
+
         ShopItem shopItem = e.getShopItem();
         VillagerShop shop = e.getShop();
         int amount = e.getAmount();
@@ -39,8 +44,6 @@ public class VillagerMarketListener implements Listener {
         String itemName = shopItem.getItemName();
         String ownerName = shop instanceof PlayerShop ? ((PlayerShop) shop).getOwnerName() : "Admin";
         if (ownerName == null) ownerName = "Admin";
-
-        TransactionManager tm = plugin.getTransactionManager();
 
         double balBefore = plugin.getEconomy().getBalance(player);
         double balAfter = balBefore - total;
@@ -53,12 +56,9 @@ public class VillagerMarketListener implements Listener {
         tm.addTransaction(uuid, t);
 
         plugin.getFoliaLib().getImpl().runLaterAsync(
-                task -> tm.ecoInProgress.remove(uuid), 3 * 20L);
+                task -> tm.shopInProgress.remove(uuid), 3 * 20L);
     }
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onBuyEarly(BuyShopItemsEvent e) {
-        plugin.getTransactionManager().ecoInProgress.add(e.getPlayer().getUniqueId());
-    }
+
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onSellShopItems(SellShopItemsEvent e) {
         String eventKey = "transaction-villagermarket-sell";
@@ -66,6 +66,11 @@ public class VillagerMarketListener implements Listener {
 
         Player player = e.getPlayer();
         UUID uuid = player.getUniqueId();
+        TransactionManager tm = plugin.getTransactionManager();
+
+
+        tm.shopInProgress.add(uuid);
+
         ShopItem shopItem = e.getShopItem();
         VillagerShop shop = e.getShop();
         int amount = e.getAmount();
@@ -74,8 +79,6 @@ public class VillagerMarketListener implements Listener {
         String itemName = shopItem.getItemName();
         String ownerName = shop instanceof PlayerShop ? ((PlayerShop) shop).getOwnerName() : "Admin";
         if (ownerName == null) ownerName = "Admin";
-
-        TransactionManager tm = plugin.getTransactionManager();
 
         double balBefore = plugin.getEconomy().getBalance(player);
         double balAfter = balBefore + total;
@@ -88,11 +91,6 @@ public class VillagerMarketListener implements Listener {
         tm.addTransaction(uuid, t);
 
         plugin.getFoliaLib().getImpl().runLaterAsync(
-                task -> tm.ecoInProgress.remove(uuid), 3 * 20L);
+                task -> tm.shopInProgress.remove(uuid), 3 * 20L);
     }
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onSellEarly(SellShopItemsEvent e) {
-        plugin.getTransactionManager().ecoInProgress.add(e.getPlayer().getUniqueId());
-    }
-
 }

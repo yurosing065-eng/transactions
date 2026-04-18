@@ -14,7 +14,6 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 public class QuickShopListener implements Listener {
 
@@ -24,62 +23,46 @@ public class QuickShopListener implements Listener {
         this.plugin = plugin;
     }
 
-    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true) // LOWEST чтобы сработать первым
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onShopPurchase(ShopSuccessPurchaseEvent e) {
-        QUser purchaser = e.getPurchaser();
-        UUID purchaserUUID = purchaser.getUniqueIdIfRealPlayer().orElse(null);
+        UUID purchaserUUID = e.getPurchaser().getUniqueIdIfRealPlayer().orElse(null);
         if (purchaserUUID == null) return;
 
+        TransactionManager tm = plugin.getTransactionManager();
+
+        // Блокировка в самом начале — до любых Vault-вызовов
+        tm.shopInProgress.add(purchaserUUID);
+
         Shop shop = e.getShop();
+        boolean playerIsSelling = shop.isBuying();
+        String eventKey = playerIsSelling ? "transaction-quickshop-sell" : "transaction-quickshop-buy";
+        if (!plugin.getConfigManager().eventEnabled.getOrDefault(eventKey, true)) {
+            tm.shopInProgress.remove(purchaserUUID);
+            return;
+        }
+
         String itemName = shop.getItem().getType().name();
         int qty = e.getAmount();
-        double total = e.getBalanceWithoutTax(); // полная сумма без налога
+        double total = e.getBalanceWithoutTax();
 
         QUser owner = shop.getOwner();
-        String shopOwnerName = owner.getUsername();
-        if (shopOwnerName == null) shopOwnerName = owner.getDisplay();
-
-        TransactionManager tm = plugin.getTransactionManager();
-        boolean playerIsSelling = shop.isBuying();
-
-        String eventKey = playerIsSelling ? "transaction-quickshop-sell" : "transaction-quickshop-buy";
-        if (!plugin.getConfigManager().eventEnabled.getOrDefault(eventKey, true)) return;
+        String ownerName = owner.getUsername();
+        if (ownerName == null) ownerName = owner.getDisplay();
 
         Type type = playerIsSelling ? Type.INCOME : Type.EXPENSE;
         OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(purchaserUUID);
-        final String finalOwnerName = shopOwnerName;
 
-
-
-        // Берём баланс ДО операции прямо сейчас
         double balBefore = plugin.getEconomy().getBalance(offlinePlayer);
         double balAfter = playerIsSelling ? balBefore + total : balBefore - total;
 
         Transaction t = new Transaction(
-                type,
-                eventKey,
-                total,
-                balBefore,
-                balAfter,
-                itemName,
-                String.valueOf(qty),
-                finalOwnerName
+                type, eventKey, total, balBefore, balAfter,
+                itemName, String.valueOf(qty), ownerName
         ).withSource("QuickShop-Hikari");
 
         tm.addTransaction(purchaserUUID, t);
 
-        // Снимаем блокировку через delay после того как Vault вызовы завершились
         plugin.getFoliaLib().getImpl().runLaterAsync(
-                task -> tm.shopInProgress.remove(purchaserUUID),
-                3 * 20L);
+                task -> tm.shopInProgress.remove(purchaserUUID), 3 * 20L);
     }
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onShopPurchaseEarly(ShopSuccessPurchaseEvent e) {
-        UUID purchaserUUID = e.getPurchaser().getUniqueIdIfRealPlayer().orElse(null);
-        if (purchaserUUID == null) return;
-        plugin.getTransactionManager().shopInProgress.add(purchaserUUID);
-    }
-
-
-
 }
