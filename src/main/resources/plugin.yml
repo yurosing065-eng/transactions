@@ -39,3 +39,9 @@ permissions:
 depend:
   - Vault
   - VaultEvents
+softdepend:
+  - QuickShop-Hikari
+  - VillagerMarket
+  - zAuctionHouse
+  - PlayerWarps
+  - Residence

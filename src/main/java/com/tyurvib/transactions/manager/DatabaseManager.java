@@ -245,16 +245,10 @@ public class DatabaseManager {
 
     // ─── Публичное API ───────────────────────────────────────────────────────
 
-    /**
-     * Добавить транзакцию в очередь записи (неблокирующий вызов).
-     */
     public void queueSaveTransaction(UUID uuid, Transaction t) {
         writeQueue.offer(new WriteTask(uuid, t));
     }
 
-    /**
-     * Обновить статус rollback — тоже через DB-поток, без отдельного Connection.
-     */
     public void updateRollbackStatus(UUID uuid, long timestamp, String key, boolean rolledBack) {
         runOnDb(() -> {
             String sql = "UPDATE transactions SET rolled_back = ? WHERE player_uuid = ? AND timestamp = ? AND key = ?";

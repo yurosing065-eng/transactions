@@ -1,5 +1,5 @@
 name: Transactions
-version: '1.4.2'
+version: '1.4.3'
 main: com.tyurvib.transactions.Transactions
 api-version: 1.21
 folia-supported: true
@@ -39,3 +39,9 @@ permissions:
 depend:
   - Vault
   - VaultEvents
+softdepend:
+  - QuickShop-Hikari
+  - VillagerMarket
+  - zAuctionHouse
+  - PlayerWarps
+  - Residence

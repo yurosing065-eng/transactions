@@ -6,7 +6,7 @@
 
   <groupId>com.tyurvib</groupId>
   <artifactId>Transactions</artifactId>
-  <version>1.4.2</version>
+  <version>1.4.3</version>
   <packaging>jar</packaging>
 
   <name>Transactions</name>
@@ -36,6 +36,10 @@
                             <pattern>com.tcoded.folialib</pattern>
                             <shadedPattern>com.tyurvib.transactions.libs.folialib</shadedPattern>
                         </relocation>
+                        <relocation>
+                            <pattern>org.sqlite</pattern>
+                            <shadedPattern>com.tyurvib.transactions.libs.sqlite</shadedPattern>
+                        </relocation>
                     </relocations>
                 </configuration>
             </plugin>
@@ -45,6 +49,10 @@
                 <configuration>
                     <source>16</source>
                     <target>16</target>
+                    <!-- Убери exclude после добавления Residence.jar через mvn install:install-file -->
+                    <excludes>
+                        <exclude>**/listener/ResidenceListener.java</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
         </plugins>
@@ -137,10 +145,30 @@
           <version>5.7.1</version>
           <scope>provided</scope>
       </dependency>
+      <!-- zAuctionHouse — установлен из локального jar -->
+      <dependency>
+          <groupId>me.zrips</groupId>
+          <artifactId>zauctionhouse</artifactId>
+          <version>4.0.0.6</version>
+          <scope>provided</scope>
+      </dependency>
+      <!-- Residence: нет в публичных Maven репо.
+           mvn install:install-file -Dfile=lib/Residence.jar -DgroupId=com.bekvon.bukkit -DartifactId=residence -Dversion=1.0 -Dpackaging=jar
+           Затем раскомментируй и убери exclude ниже.
+      <dependency>
+          <groupId>com.bekvon.bukkit</groupId><artifactId>residence</artifactId><version>1.0</version><scope>provided</scope>
+      </dependency>
+      -->
       <dependency>
           <groupId>com.tcoded</groupId>
           <artifactId>FoliaLib</artifactId>
           <version>0.4.3</version>
+          <scope>compile</scope>
+      </dependency>
+      <dependency>
+          <groupId>org.xerial</groupId>
+          <artifactId>sqlite-jdbc</artifactId>
+          <version>3.45.1.0</version>
           <scope>compile</scope>
       </dependency>
   </dependencies>

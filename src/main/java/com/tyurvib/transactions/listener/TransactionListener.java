@@ -227,7 +227,8 @@ public class TransactionListener implements Listener {
 
         if (cmd.equals("pay") && args.length >= 3 && sender != null) {
             String targetName = args[1];
-            OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
+            Player online = findOnlinePlayer(targetName);
+            OfflinePlayer target = (online != null) ? online : Bukkit.getOfflinePlayer(targetName);
             if (target == null || (!target.hasPlayedBefore() && !target.isOnline())) return;
 
             UUID senderId = sender.getUniqueId();
@@ -262,20 +263,22 @@ public class TransactionListener implements Listener {
             return;
         }
 
-        if ((cmd.equals("eco") || cmd.equals("economy")) && args.length >= 4) {
+        if ((cmd.equals("eco") || cmd.equals("economy")) && args.length >= 3) {
             String sub = args[1].toLowerCase();
+            // eco reset <player> — 3 аргумента; eco give/take/set <player> <amount> — 4
+            if (!sub.equals("reset") && args.length < 4) return;
             String targetName = args[2];
             boolean isSet = sub.equals("set") || sub.equals("reset");
-            String key = sub.equals("give") ? "transaction-admin-give" : "transaction-admin-take";
+            String key = (sub.equals("give") || sub.equals("add")) ? "transaction-admin-give" : "transaction-admin-take";
 
-            OfflinePlayer target = Bukkit.getOfflinePlayer(targetName);
+            Player online = findOnlinePlayer(targetName);
+            OfflinePlayer target = (online != null) ? online : Bukkit.getOfflinePlayer(targetName);
             if (target == null || (!target.hasPlayedBefore() && !target.isOnline())) return;
 
             UUID tId = target.getUniqueId();
             double balanceBefore = plugin.getEconomy().getBalance(target);
             tm.ecoInProgress.add(tId);
 
-            // ✅ было: getGlobalRegionScheduler().runDelayed(plugin, ..., 5L)
             plugin.getFoliaLib().getImpl().runLater(task -> {
                 double balanceAfter = plugin.getEconomy().getBalance(target);
                 double delta = balanceAfter - balanceBefore;
@@ -347,6 +350,21 @@ public class TransactionListener implements Listener {
     private boolean isEventEnabled(String key) {
         Map<String, Boolean> events = plugin.getConfigManager().eventEnabled;
         return events.getOrDefault(key, true);
+    }
+
+    /**
+     * Ищет онлайн-игрока по имени с учётом Geyser/Floodgate:
+     * сначала точное совпадение, затем case-insensitive по всем онлайн-игрокам
+     * (Bedrock-игроки через Geyser имеют префикс '.' и могут не находиться через getPlayerExact).
+     */
+    private Player findOnlinePlayer(String name) {
+        Player p = Bukkit.getPlayerExact(name);
+        if (p != null) return p;
+        String lower = name.toLowerCase();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.getName().toLowerCase().equals(lower)) return online;
+        }
+        return null;
     }
     @EventHandler
     public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {

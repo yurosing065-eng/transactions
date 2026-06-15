@@ -82,3 +82,7 @@ update-success: 配置和語言檔案成功更新！
 vault-not-found: '§c[交易系統] 錯誤：未找到 Vault 或未安裝經濟插件！'
 villagermarket-buy: '*c購買物品'
 villagermarket-sell: '&a販售物品'
+transaction-zauctionhouse-buy: "從拍賣行購買了 %p1%（賣家：%p2%）"
+transaction-zauctionhouse-sell: "在拍賣行出售了 %p1%（買家：%p2%）"
+transaction-residence-buy: "購買了住宅 %p1%"
+transaction-residence-sell: "出售了住宅 %p1%"

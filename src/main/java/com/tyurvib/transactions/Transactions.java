@@ -5,6 +5,7 @@ import com.tyurvib.transactions.command.TransactionsCommand;
 import com.tyurvib.transactions.listener.QuickShopListener;
 import com.tyurvib.transactions.listener.TransactionListener;
 import com.tyurvib.transactions.listener.VillagerMarketListener;
+import com.tyurvib.transactions.listener.ZAuctionHouseListener;
 import com.tyurvib.transactions.manager.ConfigManager;
 import com.tyurvib.transactions.manager.DatabaseManager;
 import com.tyurvib.transactions.manager.GuiManager;
@@ -50,6 +51,15 @@ public class Transactions extends JavaPlugin {
             getServer().getPluginManager().registerEvents(new VillagerMarketListener(this), this);
             getLogger().info("VillagerMarket интеграция включена.");
         }
+        if (getServer().getPluginManager().getPlugin("zAuctionHouse") != null) {
+            getServer().getPluginManager().registerEvents(new ZAuctionHouseListener(this), this);
+            getLogger().info("zAuctionHouse интеграция включена.");
+        }
+        // Residence — раскомментируй после: mvn install:install-file -Dfile=lib/Residence.jar ...
+        // if (getServer().getPluginManager().getPlugin("Residence") != null) {
+        //     getServer().getPluginManager().registerEvents(new com.tyurvib.transactions.listener.ResidenceListener(this), this);
+        //     getLogger().info("Residence интеграция включена.");
+        // }
     }
     public FoliaLib getFoliaLib() { return foliaLib; }
     @Override

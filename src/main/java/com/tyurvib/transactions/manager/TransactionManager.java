@@ -17,45 +17,26 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.*;
 
-/**
- * TransactionManager — версия 2.0
- *
- * Ключевые исправления:
- *  1. Полностью убран прямой доступ к Connection/PreparedStatement/ResultSet —
- *     вся работа с БД идёт через DatabaseManager.loadTransactionsAsync(),
- *     который выполняется в выделенном DB-потоке.
- *  2. loadingFutures защищены от гонки: put в кеш и remove из futures
- *     атомарны через whenComplete с проверкой повторной записи.
- *  3. saveDirtyPlayers не удаляет UUID до подтверждения сохранения —
- *     логика переехала в DatabaseManager.savePlayerSettings().
- *  4. Публичные поля состояния оставлены (обратная совместимость с GUI),
- *     но сгруппированы и задокументированы.
- *  5. downloadTransactionsToTxt пишет файл в отдельном потоке,
- *     не блокируя ни main thread, ни DB-поток.
- */
+
 public class TransactionManager {
 
     private final Transactions plugin;
     private final FoliaLib foliaLib;
 
-    // ─── Кеш транзакций ──────────────────────────────────────────────────────
 
-    /** uuid → список транзакций (от новых к старым, DESC). */
     private final ConcurrentMap<UUID, List<Transaction>> transactionCache = new ConcurrentHashMap<>();
 
-    /** Дедупликация параллельных загрузок одного UUID. */
+    /** UUID тех игроков, чей кеш был полностью загружен из БД. */
+    private final Set<UUID> fullyLoaded = ConcurrentHashMap.newKeySet();
+
     private final ConcurrentMap<UUID, CompletableFuture<List<Transaction>>> loadingFutures = new ConcurrentHashMap<>();
 
-    // ─── Настройки игрока ────────────────────────────────────────────────────
-
-    /** UUID-ы, чьи настройки изменились и ещё не сохранены в БД. */
     public final Set<UUID> dirtySettings = ConcurrentHashMap.newKeySet();
 
     public final Map<UUID, Integer>    playerGmtOffset = new ConcurrentHashMap<>();
     public final Map<UUID, FilterData> playerFilters   = new ConcurrentHashMap<>();
     public final Map<UUID, Boolean>    showBalance     = new ConcurrentHashMap<>();
 
-    // ─── UI-состояние (только в памяти, не персистируется) ───────────────────
 
     public final Map<UUID, Integer>     currentPage        = new ConcurrentHashMap<>();
     public final Map<UUID, String>      searchTargetPlayer = new ConcurrentHashMap<>();
@@ -64,14 +45,11 @@ public class TransactionManager {
     public final Map<UUID, String>      rollbackTargetName = new ConcurrentHashMap<>();
     public final Set<UUID>              playerInSearchMode = ConcurrentHashMap.newKeySet();
 
-    // ─── Блокировки дедупликации событий ─────────────────────────────────────
 
     public final Set<UUID> payInProgress      = ConcurrentHashMap.newKeySet();
     public final Set<UUID> shopInProgress     = ConcurrentHashMap.newKeySet();
     public final Set<UUID> ecoInProgress      = ConcurrentHashMap.newKeySet();
     public final Set<UUID> externalInProgress = ConcurrentHashMap.newKeySet();
-
-    // ─── Конструктор ─────────────────────────────────────────────────────────
 
     public TransactionManager(Transactions plugin) {
         this.plugin   = plugin;
@@ -81,18 +59,11 @@ public class TransactionManager {
         startSaveTask();
     }
 
-    // ─── Получение транзакций ────────────────────────────────────────────────
-
-    /**
-     * Возвращает транзакции из кеша мгновенно, либо запускает загрузку из БД.
-     * Загрузка идёт через DB-поток DatabaseManager — main thread не блокируется.
-     * Повторные вызовы для одного UUID до завершения загрузки возвращают тот же Future.
-     */
     public CompletableFuture<List<Transaction>> getTransactionsAsync(UUID uuid) {
-        // Быстрый путь: данные уже в кеше
-        List<Transaction> cached = transactionCache.get(uuid);
-        if (cached != null) {
-            return CompletableFuture.completedFuture(cached);
+        // Быстрый путь: данные уже полностью загружены из БД
+        if (fullyLoaded.contains(uuid)) {
+            List<Transaction> cached = transactionCache.get(uuid);
+            if (cached != null) return CompletableFuture.completedFuture(cached);
         }
 
         // Дедупликация: если уже грузим — возвращаем тот же Future
@@ -107,17 +78,26 @@ public class TransactionManager {
                                 return;
                             }
                             if (result != null) {
-                                // putIfAbsent: если addTransaction() успел записать раньше — не затираем
-                                transactionCache.putIfAbsent(
-                                        uuid, Collections.synchronizedList(result));
+                                List<Transaction> fresh = Collections.synchronizedList(result);
+                                // Если addTransaction() добавил записи до загрузки — переносим их в начало
+                                List<Transaction> existing = transactionCache.get(uuid);
+                                if (existing != null) {
+                                    synchronized (existing) {
+                                        for (int i = existing.size() - 1; i >= 0; i--) {
+                                            fresh.add(0, existing.get(i));
+                                        }
+                                        if (fresh.size() > 1000) {
+                                            fresh.subList(1000, fresh.size()).clear();
+                                        }
+                                    }
+                                }
+                                transactionCache.put(uuid, fresh);
+                                fullyLoaded.add(uuid);
                             }
                         })
         );
     }
 
-    /**
-     * Блокирующий вариант — использовать ТОЛЬКО из async-потоков, никогда из main thread.
-     */
     public List<Transaction> getTransactions(UUID uuid) {
         try {
             return getTransactionsAsync(uuid).get(5, TimeUnit.SECONDS);
@@ -129,19 +109,24 @@ public class TransactionManager {
 
     // ─── Добавление транзакции ───────────────────────────────────────────────
 
-    /**
-     * Добавляет транзакцию в кеш и ставит в очередь записи БД.
-     * Вызывается из listener'ов — должен быть максимально быстрым.
-     */
     public void addTransaction(UUID uuid, Transaction t) {
         if (t.amount < 0 || (t.amount == 0 && t.type != Type.YELLOW)) return;
 
-        transactionCache
-                .computeIfAbsent(uuid, k -> Collections.synchronizedList(new ArrayList<>(200)))
-                .add(t);
+        // Обновляем кеш только если он уже был загружен из БД,
+        // чтобы не создавать неполный список из 1 записи вместо 1000+
+        if (fullyLoaded.contains(uuid)) {
+            List<Transaction> list = transactionCache.get(uuid);
+            if (list != null) {
+                synchronized (list) {
+                    list.add(0, t); // вставляем в начало (список хранится DESC по времени)
+                    if (list.size() > 1000) list.remove(list.size() - 1);
+                }
+            }
+        }
+
         plugin.getDatabaseManager().queueSaveTransaction(uuid, t);
     }
-    // ─── Сохранение настроек ─────────────────────────────────────────────────
+
 
     public boolean isDirty(UUID uuid) { return dirtySettings.contains(uuid); }
     public void markDirty(UUID uuid)  { dirtySettings.add(uuid); }
@@ -173,6 +158,7 @@ public class TransactionManager {
 
     public void onPlayerQuit(UUID uuid) {
         transactionCache.remove(uuid);
+        fullyLoaded.remove(uuid);
         loadingFutures.remove(uuid);
         currentPage.remove(uuid);
         searchTargetPlayer.remove(uuid);
@@ -184,6 +170,7 @@ public class TransactionManager {
 
     public void clearCache() {
         transactionCache.clear();
+        fullyLoaded.clear();
     }
 
     // ─── Экспорт в TXT ──────────────────────────────────────────────────────
@@ -212,7 +199,7 @@ public class TransactionManager {
             SimpleDateFormat sdf = new SimpleDateFormat("dd.MM.yyyy HH:mm");
             sdf.setTimeZone(TimeZone.getTimeZone("GMT" + (offset >= 0 ? "+" : "") + offset));
 
-            // DESC из БД → реверс для файла (хронологический порядок)
+
             List<Transaction> ordered = new ArrayList<>(list);
             Collections.reverse(ordered);
 

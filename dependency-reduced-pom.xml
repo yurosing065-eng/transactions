@@ -4,7 +4,7 @@
   <groupId>com.tyurvib</groupId>
   <artifactId>Transactions</artifactId>
   <name>Transactions</name>
-  <version>1.4.2</version>
+  <version>1.4.3</version>
   <build>
     <resources>
       <resource>
@@ -30,6 +30,10 @@
               <pattern>com.tcoded.folialib</pattern>
               <shadedPattern>com.tyurvib.transactions.libs.folialib</shadedPattern>
             </relocation>
+            <relocation>
+              <pattern>org.sqlite</pattern>
+              <shadedPattern>com.tyurvib.transactions.libs.sqlite</shadedPattern>
+            </relocation>
           </relocations>
         </configuration>
       </plugin>
@@ -38,6 +42,9 @@
         <configuration>
           <source>16</source>
           <target>16</target>
+          <excludes>
+            <exclude>**/listener/ResidenceListener.java</exclude>
+          </excludes>
         </configuration>
       </plugin>
     </plugins>
@@ -114,6 +121,12 @@
       <groupId>com.viaversion</groupId>
       <artifactId>viaversion-api</artifactId>
       <version>5.7.1</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>me.zrips</groupId>
+      <artifactId>zauctionhouse</artifactId>
+      <version>4.0.0.6</version>
       <scope>provided</scope>
     </dependency>
   </dependencies>

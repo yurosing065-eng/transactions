@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static org.bukkit.Bukkit.getServer;
+
 public class TransactionsCommand implements CommandExecutor, TabExecutor {
 
     private final Transactions plugin;
@@ -121,6 +123,14 @@ public class TransactionsCommand implements CommandExecutor, TabExecutor {
 
                 plugin.getGuiManager().openTransactions(p, 0, target.getUniqueId(), target.getName());
                 return true;
+            }
+            case "disable" -> {
+                if (!sender.hasPermission("transactions.admin")) {
+                    sender.sendMessage("Нет прав!");
+                    return true;
+                }
+                sender.sendMessage("Отключение");
+                getServer().getPluginManager().disablePlugin(plugin);
             }
         }
 

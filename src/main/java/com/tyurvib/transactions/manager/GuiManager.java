@@ -63,10 +63,11 @@ public class GuiManager {
             }
             filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
 
-            double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
-            List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
             foliaLib.getScheduler().runAtEntity(player, task -> {
                 if (!player.isOnline()) return;
+
+                double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
+                List<Double> balanceLog = calculateBalanceLog(filteredList, currentBalance);
 
                 Inventory inv = Bukkit.createInventory(null, 54, cm.getTranslation("gui-title") + targetName + " (#" + (page + 1) + ")");
 
@@ -81,7 +82,7 @@ public class GuiManager {
                     Transaction t = filteredList.get(i);
                     ItemStack item = (t.key.contains("pay") && t.params.length > 0)
                             ? getPlayerHead(t.params[0])
-                            : getHead(getTransactionHeadBase64(t.type));
+                            : getCachedTypeHead(t.type);
 
                     ItemMeta meta = item.getItemMeta();
                     String colorCode = cm.getTransactionColor(t.type);
@@ -92,8 +93,8 @@ public class GuiManager {
                         double after = balanceLog.get(i);
                         double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
                         lore.add("§r§f" + cm.getTranslation("balance-change",
-                                cm.getAmountFormatter().format(Math.abs(before)),
-                                cm.getAmountFormatter().format(Math.abs(after))));
+                                cm.getAmountFormatter().format(before),
+                                cm.getAmountFormatter().format(after)));
                     }
                     lore.add("§r§7" + cm.getTranslation("time") + sdf.format(new Date(t.timestamp)));
                     if (player.hasPermission("transactions.source") && t.source != null && !t.source.isEmpty()) {
@@ -217,6 +218,14 @@ public class GuiManager {
         return balances;
     }
 
+    private ItemStack getCachedTypeHead(Type type) {
+        return switch (type) {
+            case INCOME  -> INCOME_ITEM.clone();
+            case EXPENSE -> EXPENSE_ITEM.clone();
+            default      -> PAY_ITEM.clone();
+        };
+    }
+
     public ItemStack createButton(Material mat, String name) {
         ItemStack item = new ItemStack(mat);
         ItemMeta meta = item.getItemMeta();
@@ -268,9 +277,6 @@ public class GuiManager {
         }
     }
     public void openTransactions(Player player, int page, UUID targetUUID, String targetName) {
-        plugin.getLogger().info("useDialogs=" + plugin.getConfigManager().useDialogs
-                + " isDialogSupported=" + isDialogSupported(player));
-
         if (plugin.getConfigManager().useDialogs && isDialogSupported(player)) {
             openDialog(player, page, targetUUID, targetName);
         } else {
@@ -298,11 +304,6 @@ public class GuiManager {
             return true;
         }
     }
-    @EventHandler
-    public void onQuit(org.bukkit.event.player.PlayerQuitEvent e) {
-        plugin.getTransactionManager().onPlayerQuit(e.getPlayer().getUniqueId());
-    }
-
     private static net.kyori.adventure.text.Component legacy(String s) {
         return net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer.legacySection().deserialize(s);
     }
@@ -343,9 +344,6 @@ public class GuiManager {
             }
             filteredList.sort((t1, t2) -> Long.compare(t2.timestamp, t1.timestamp));
 
-            double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
-            List<Double> balanceLog = calculateBalanceLog(list, currentBalance);
-
             Map<Long, Integer> timestampToIndex = new HashMap<>();
             for (int i = 0; i < list.size(); i++) {
                 timestampToIndex.put(list.get(i).timestamp, i);
@@ -353,6 +351,9 @@ public class GuiManager {
 
             foliaLib.getScheduler().runAtEntity(player,task -> {
                 if (!player.isOnline()) return;
+
+                double currentBalance = plugin.getEconomy().getBalance(Bukkit.getOfflinePlayer(targetUUID));
+                List<Double> balanceLog = calculateBalanceLog(list, currentBalance);
 
                 final int perPage = 8;
                 int start = page * perPage;
@@ -428,9 +429,9 @@ public class GuiManager {
                                 double after = balanceLog.get(idx);
                                 double before = after + (t.type == Type.INCOME ? -t.amount : t.amount);
                                 line.append("\n   §8")
-                                        .append(cm.getAmountFormatter().format(Math.abs(before)))
+                                        .append(cm.getAmountFormatter().format(before))
                                         .append(" → ")
-                                        .append(cm.getAmountFormatter().format(Math.abs(after)))
+                                        .append(cm.getAmountFormatter().format(after))
                                         .append("  §7").append(time);
                             } else {
                                 line.append("  §7").append(time);
